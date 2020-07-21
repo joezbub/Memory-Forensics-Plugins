@@ -1,6 +1,11 @@
+#159 seconds runtime
+
 import os
 import re
 import struct
+import sys
+import time
+import timeit
 
 from itertools import groupby
 
@@ -167,6 +172,8 @@ class linux_python_brute_strings(linux_pslist.linux_pslist):
             debug.error("Please enter the CARLA Python API process PID")
 
     def calculate(self):
+        #start = timeit.default_timer()
+
         linux_common.set_plugin_members(self)
         self._validate_config()
         pidstr = self._config.PID
@@ -179,6 +186,9 @@ class linux_python_brute_strings(linux_pslist.linux_pslist):
         for task in tasks:
             for py_string in find_python_strings(task):
                 yield task, py_string
+
+        #stop = timeit.default_timer()
+        #print("Runtime: {0}".format(stop - start))
 
     def unified_output(self, data):
         return TreeGrid([("Pid", int),
