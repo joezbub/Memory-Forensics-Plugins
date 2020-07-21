@@ -9,7 +9,7 @@ Clone this repository into your Volatility directory.
 To execute the plugin found in `python-brute-strings.py`, execute the following:
 <pre><code>$ python vol.py --plugins=./CARLA-Volatility-Plugins/ --profile=*YOUR LINUX PROFILE* -f *PATH TO MEMORY DUMP* linux_python_brute_strings -p *Python API PID*</code></pre>
 
-This will find all CPython string objects in your Python process memory (located in heaps). Note that you must specify exactly ONE Python process in the form of --pid=PID or -p PID. See --help for more information.
+This will find all CPython string objects in your Python process memory (located in heaps) by checking if each address is the start of a PyStringObject. This brute force search will be able to yield deallocated (not yet overwritten) strings. Note that you must specify exactly ONE Python process in the form of --pid=PID or -p PID. See --help for more information.
 
 ## testplug
 `testplug.py` just lists all the processes names and their corresponding PIDs. Run it by executing:
