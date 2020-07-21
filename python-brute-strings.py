@@ -11,7 +11,7 @@ from volatility.plugins.linux import pslist as linux_pslist
 from volatility.renderers import TreeGrid
 from volatility import utils
 
-pyobjs_vtype_64 = {
+pyobjs_vtype_64 = { #Found info here: https://docs.python.org/2.7/c-api/structures.html#c.PyObject_HEAD
     '_PyStringObj': [
         37,
         {
