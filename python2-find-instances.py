@@ -631,7 +631,7 @@ def _is_python_task(task, pidstr):
         return True
 
 
-class linux_find_instances(linux_pslist.linux_pslist):
+class linux_find_instances2(linux_pslist.linux_pslist):
     """
     Pull instance objects from a process's heap.
     """
