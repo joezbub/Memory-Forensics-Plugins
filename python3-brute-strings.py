@@ -237,7 +237,7 @@ def _is_python_task(task, pidstr):
         return True
 
 
-class linux_find_strings3(linux_pslist.linux_pslist):
+class linux_python3_strings(linux_pslist.linux_pslist):
     """
     Pull instance objects from a process's heap.
     """

@@ -159,7 +159,7 @@ def _is_python_task(task, pidstr):
         return True
 
 
-class linux_python_brute_strings(linux_pslist.linux_pslist):
+class linux_python2_strings(linux_pslist.linux_pslist):
     def __init__(self, config, *args, **kwargs):
         linux_pslist.linux_pslist.__init__(self, config, *args, **kwargs)
         self._config.add_option(
