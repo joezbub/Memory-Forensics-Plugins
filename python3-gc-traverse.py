@@ -15,7 +15,8 @@ from volatility.plugins.linux import pslist as linux_pslist
 from volatility.renderers import TreeGrid
 from volatility import utils
 
-pyobjs_vtype_64 = { #Found info here: https://github.com/python/cpython/blob/3.7/Include
+
+pyobjs_vtype_64 = { #Found info here: https://github.com/python/cpython/blob/3.6/Include
     '_PyTypeObject': [
         40,
         {
@@ -39,6 +40,65 @@ pyobjs_vtype_64 = { #Found info here: https://github.com/python/cpython/blob/3.7
             'utf8_ptr': [56, ['pointer', ['char']]],
             'wstr_length': [64, ['long long']],
             'ob_data': [72, ['pointer', ['char']]]
+        }],
+    '_PyGC_Head': [
+        24,
+        {
+            'gc_next': [0, ['unsigned long long']],
+            'gc_prev': [8, ['unsigned long long']],
+            'gc_refs': [16, ['long long']]
+        }],
+    '_GC_Runtime_State': [
+        352,
+        {
+            'trash_delete_later': [0, ['address']],
+            'trash_delete_nesting': [8, ['int']], 
+            'enabled': [12, ['int']],
+            'debug': [16, ['int']],
+            'alignment1': [20, ['void']],
+            'gen1_head': [32, ['_PyGC_Head']],
+            'gen1_dummy': [56, ['void']],
+            'gen1_threshold': [64, ['int']],
+            'gen1_count': [68, ['int']],
+            'gen1_alignment': [72, ['void']],
+            'gen2_head': [80, ['_PyGC_Head']],
+            'gen2_dummy': [104, ['void']],
+            'gen2_threshold': [112, ['int']],
+            'gen2_count': [116, ['int']],
+            'gen1_alignment': [120, ['void']],
+            'gen3_head': [128, ['_PyGC_Head']],
+            'gen3_dummy': [152, ['void']],
+            'gen3_threshold': [160, ['int']],
+            'gen3_count': [164, ['int']],
+            'gen1_alignment': [168, ['void']],
+            'generation0': [176, ['pointer', ['_PyGC_Head']]],
+            'alignment2': [184, ['void']],
+            'perm_gen_head': [192, ['_PyGC_Head']],
+            'perm_gen_dummy': [216, ['void']],
+            'perm_gen_threshold': [224, ['int']],
+            'perm_gen_count': [228, ['int']],
+            'end_data': [232, ['void']]
+        }],
+    '_PyInterpreters': [
+        32,
+        {
+            'interpreters_mutex': [0, ['address']],
+            'interpreters_head': [8, ['address']], 
+            'interpreters_main': [16, ['address']],
+            'interpreters_next_id': [24, ['long long']]
+        }],
+    '_PyRuntimeState': [ 
+        1520,
+        {
+            'initialized': [0, ['int']],
+            'core_initialized': [4, ['int']],  
+            'finalizing': [8, ['pointer', ['void']]], 
+            'interpreters': [16, ['_PyInterpreters']],
+            'exitfuncs': [48, ['void']],
+            'nexitfuncs': [304, ['int']],
+            'alignment1': [308, ['void']],
+            'gc': [320, ['_GC_Runtime_State']],
+            'end_data': [672, ['void']]
         }]
     }
 
@@ -50,7 +110,7 @@ class _PyTypeObject(obj.CType):
         s = "1234567890qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM._-\/"
         for i in range(41):
             tmp = self.obj_vm.zread(self.tp_name + i, 1)
-            if tmp == '\0':
+            if tmp == '\x00':
                 if (i >= 2):
                     return True
                 else:
@@ -65,11 +125,12 @@ class _PyTypeObject(obj.CType):
         s = "1234567890qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM._-\/"
         for i in range(41):
             tmp = self.obj_vm.zread(self.tp_name + i, 1)
-            if tmp == '\0' or tmp not in s:
+            if tmp == '\x00' or tmp not in s:
                 ct = i
                 break
         ret = str(self.obj_vm.zread(self.tp_name, ct))
         return ret
+
 
 class _PyUnicodeString(obj.CType):
     def is_valid(self): #ob_hash is different from Python's builtin hash
@@ -153,67 +214,147 @@ class _PyUnicodeString(obj.CType):
             return uni_buff.decode()
 
 
-class PythonClassTypes3(obj.ProfileModification):
+class _PyGC_Head(obj.CType):
+    def is_valid(self):
+        return (self.gc_next.is_valid() and self.gc_prev.is_valid() and self.gc_refs.is_valid())
+
+    @property
+    def next_val(self):
+        return self.gc_next
+
+    @property
+    def prev_val(self):
+        return self.gc_prev
+    
+
+class _GC_Runtime_State(obj.CType):
+    def is_valid(self):
+        return (self.trash_delete_later.is_valid() and self.trash_delete_nesting.is_valid()
+            and self.gen1_head.is_valid() and self.gen2_head.is_valid() and self.gen3_head.is_valid())
+
+
+class _PyInterpreters(obj.CType):
+    def is_valid(self):
+        return (self.interpreters_mutex.is_valid() and self.interpreters_head.is_valid()
+            and self.interpreters_main.is_valid())
+
+
+class _PyRuntimeState(obj.CType):
+    def is_valid(self):
+        return (self.initialized.is_valid() and self.core_initialized.is_valid() 
+            and self.interpreters.is_valid() and self.gc.is_valid())
+
+    @property
+    def gen1_next(self):
+        return self.gc.gen1_head.next_val
+    
+    @property
+    def gen2_next(self):
+        return self.gc.gen2_head.next_val
+
+    @property
+    def gen3_next(self):
+        return self.gc.gen3_head.next_val
+
+    @property
+    def gen1_prev(self):
+        return self.gc.gen1_head.prev_val
+    
+    @property
+    def gen2_prev(self):
+        return self.gc.gen2_head.prev_val
+
+    @property
+    def gen3_prev(self):
+        return self.gc.gen3_head.prev_val
+
+
+class PythonClassTypes4(obj.ProfileModification):
     """
     Profile modifications for Python class types.  Only Linux and Mac OS,
     on 64-bit systems, are supported right now.
     """
     conditions = {"os": lambda x: x in ["linux", "mac"],
                   "memory_model": lambda x: x == "64bit"}
-
-    def modification(self, profile):
+    
+    def modification(self, profile): #writes to file somewhere (beware of duplicate names)
         profile.vtypes.update(pyobjs_vtype_64)
         profile.object_classes.update({
             "_PyTypeObject": _PyTypeObject,
-            "_PyUnicodeString": _PyUnicodeString
+            "_PyUnicodeString": _PyUnicodeString,
+            "_PyGC_Head": _PyGC_Head,
+            "_GC_Runtime_State": _GC_Runtime_State,
+            "_PyInterpreters": _PyInterpreters,
+            "_PyRuntimeState": _PyRuntimeState
         })
 
 
-def brute_force_search(addr_space, obj_type_string, start, end, step_size):
+def brute_force_search(addr_space, obj_type_string, start, stop, class_name):
     """
     Brute-force search an area of memory for a given object type.  Returns
     valid types as a generator.
     """
-    offset = start
+    tmp = start
     arr = []
-    while offset < end:
-        found_object = obj.Object(obj_type_string,
-                                  offset=offset,
+
+    while True:
+        arr.append(tmp)
+        found_head = obj.Object("_PyGC_Head",
+                                  offset=tmp,
                                   vm=addr_space)
+        found_object = obj.Object("_PyUnicodeString",
+                            offset=tmp + 32,
+                            vm=addr_space)
         
-        if found_object.is_valid():
-            arr.append(found_object)
-            offset += 48 + found_object.length
-        else:
-            offset += step_size
+        if not found_head.is_valid():
+            print "_PyGC_Head invalid"
+            sys.exit(0)
+            
+        print "curr:", hex(tmp), "next:", hex(found_head.next_val), "prev:", hex(found_head.prev_val)
+        print "type name:", found_object.ob_type.dereference().name
+        if (tmp == stop):
+            break
+        tmp = found_head.next_val    
+
     return arr
 
 
-def find_instance(task):
-    addr_space = task.get_process_address_space() #5603 seconds
-    heaps = get_heaps_and_anon(task)
-    
-    found_instances = []
-    for heap_vma in heaps:
-        found_instances.extend(brute_force_search(
-                addr_space=addr_space,
-                obj_type_string="_PyUnicodeString",
-                start=heap_vma.vm_start,
-                end=heap_vma.vm_end,
-                step_size=1))
-    return found_instances
-
-
-def get_heaps_and_anon(task):
+def find_instance(task, class_name):
     """
-    Given a task, return the mapped sections corresponding to that task's
-    heaps and anonymous mappings (since CPython sometimes mmaps things).
+    Go to _PyRuntimeState -> gc -> generations -> brute force through PyGC_Head pointers
     """
-    for vma in task.get_proc_maps():
-        if (vma.vm_start <= task.mm.start_brk and vma.vm_end >= task.mm.brk):
-            yield vma
-        elif vma.vm_name(task) == "Anonymous Mapping":
-            yield vma
+    addr_space = task.get_process_address_space() 
+
+    pyruntime = obj.Object("_PyRuntimeState",
+                                  offset=0xaa5560, #harcoded address of _PyRuntime (found in ELF header)
+                                  vm=addr_space)
+    if not pyruntime.is_valid():
+        print "Not _PyRuntimeState"
+        sys.exit(0)
+
+    found_locs = []
+    found_locs.extend(brute_force_search(
+            addr_space=addr_space,
+            obj_type_string="_PyGC_Head",
+            start=pyruntime.gen1_next,
+            stop=pyruntime.gen1_prev,
+            class_name=class_name))
+    found_locs.extend(brute_force_search(
+            addr_space=addr_space,
+            obj_type_string="_PyGC_Head",
+            start=pyruntime.gen2_next,
+            stop=pyruntime.gen2_prev,
+            class_name=class_name))
+    found_locs.extend(brute_force_search(
+            addr_space=addr_space,
+            obj_type_string="_PyGC_Head",
+            start=pyruntime.gen3_next,
+            stop=pyruntime.gen3_prev,
+            class_name=class_name))
+
+    print len(found_locs), "objects found"
+    sys.exit(0)
+    return found_locs
 
 
 def _is_python_task(task, pidstr):
@@ -226,9 +367,13 @@ def _is_python_task(task, pidstr):
         return True
 
 
-class linux_python3_strings(linux_pslist.linux_pslist):
+class linux_python3_instances(linux_pslist.linux_pslist):
     """
-    Pull instance objects from a process's heap.
+    Pull Tensorflow model instances from a Python process's GC generations. Under development.
+    Still need to:
+    1. Write Dict Object
+    2. Understand how instances are represented
+    3. Automate search for _PyRuntime
     """
     def __init__(self, config, *args, **kwargs):
         linux_pslist.linux_pslist.__init__(self, config, *args, **kwargs)
@@ -239,7 +384,7 @@ class linux_python3_strings(linux_pslist.linux_pslist):
 
     def _validate_config(self):
         if self._config.PID is not None and len(self._config.PID.split(',')) != 1:
-            debug.error("Please enter the Python PID")
+            debug.error("Please enter Python PID")
         
     def calculate(self):
         """
@@ -259,8 +404,8 @@ class linux_python3_strings(linux_pslist.linux_pslist):
                 tasks.append(task)
 
         for task in tasks:
-            for string in find_instance(task):
-                yield string
+            for instance in find_instance(task, "HUD"):
+                yield instance
         
         #stop = timeit.default_timer()
         #print("Runtime: {0}".format(stop - start))
@@ -277,7 +422,7 @@ class linux_python3_strings(linux_pslist.linux_pslist):
         Generate data that may be formatted for printing.
         """
         for instance in data:
-            yield (0, [str(instance.val)])
+            yield (0, [str(instance.string)])
 
     def render_text(self, outfd, data):
         self.table_header(outfd, [("Name", "100")])
