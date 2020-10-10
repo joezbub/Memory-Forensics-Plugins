@@ -107,11 +107,11 @@ class _PyTypeObject(obj.CType):
     def is_valid(self):
         if not (self.ob_type.is_valid() and self.tp_name.is_valid() and self.tp_basicsize.is_valid()):
             return False
-        s = "1234567890qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM._-\/"
+        s = "1234567890qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM._-\/%" #make sure tp_name is one of these characters
         for i in range(41):
             tmp = self.obj_vm.zread(self.tp_name + i, 1)
             if tmp == '\x00':
-                if (i >= 2):
+                if (i >= 2): #tp_name is at least 3 characters (str)
                     return True
                 else:
                     return False
@@ -122,7 +122,7 @@ class _PyTypeObject(obj.CType):
     @property
     def name(self):
         ct = 0
-        s = "1234567890qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM._-\/"
+        s = "1234567890qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM._-\/%"
         for i in range(41):
             tmp = self.obj_vm.zread(self.tp_name + i, 1)
             if tmp == '\x00' or tmp not in s:
@@ -140,6 +140,7 @@ class _PyUnicodeString(obj.CType):
                 and self.ob_type.dereference().tp_basicsize == 80):
             return False
 
+        #bit shifting to get interned, kind, compact, ascii_tmp, and ready for ob_state
         interned = kind = compact = ascii_tmp = ready = -1
 
         if (self.ob_state >> 1) & 1 and not((self.ob_state >> 0) & 1): #interned
@@ -182,6 +183,7 @@ class _PyUnicodeString(obj.CType):
 
     @property
     def val(self):
+        #more bit shifting for ob_state
         interned = kind = compact = ascii_tmp = ready = 0
         if (self.ob_state >> 1) & 1 and not((self.ob_state >> 0) & 1): #interned
             interned = 2
@@ -404,7 +406,7 @@ class linux_python3_instances(linux_pslist.linux_pslist):
                 tasks.append(task)
 
         for task in tasks:
-            for instance in find_instance(task, "HUD"):
+            for instance in find_instance(task, "model.Sequential"):
                 yield instance
         
         #stop = timeit.default_timer()
