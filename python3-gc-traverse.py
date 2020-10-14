@@ -16,7 +16,7 @@ from volatility.renderers import TreeGrid
 from volatility import utils
 
 
-pyobjs_vtype_64 = { #Found info here: https://github.com/python/cpython/blob/3.6/Include
+pyobjs_vtype_64 = { #Found info here: https://github.com/python/cpython/blob/3.7/Include
     '_PyTypeObject': [
         40,
         {
@@ -104,43 +104,38 @@ pyobjs_vtype_64 = { #Found info here: https://github.com/python/cpython/blob/3.6
 
 
 class _PyTypeObject(obj.CType):
-    def is_valid(self):
-        if not (self.ob_type.is_valid() and self.tp_name.is_valid() and self.tp_basicsize.is_valid()):
+    def check_char(self, c):
+        #make sure tp_name is one of these characters
+        s = "1234567890qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM._-\/%"
+        if c in s:
+            return True
+        else:
             return False
-        s = "1234567890qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM._-\/%" #make sure tp_name is one of these characters
+    
+    @property
+    def name(self):
+        ret = ""
         for i in range(41):
             tmp = self.obj_vm.zread(self.tp_name + i, 1)
             if tmp == '\x00':
-                if (i >= 2): #tp_name is at least 3 characters (str)
-                    return True
+                if (i >= 2):
+                    return ret
                 else:
-                    return False
-            if tmp not in s:
-                return False
-        return False
+                    return "invalid"
+            if not self.check_char(tmp):
+                return "invalid"
+            ret += tmp
+        return "invalid"
 
-    @property
-    def name(self):
-        ct = 0
-        s = "1234567890qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM._-\/%"
-        for i in range(41):
-            tmp = self.obj_vm.zread(self.tp_name + i, 1)
-            if tmp == '\x00' or tmp not in s:
-                ct = i
-                break
-        ret = str(self.obj_vm.zread(self.tp_name, ct))
-        return ret
+    def is_valid(self):
+        if not (self.ob_type.is_valid() and self.tp_name.is_valid() and self.tp_basicsize.is_valid()):
+            return False
+        s = self.name
+        return (s != "invalid")
 
 
 class _PyUnicodeString(obj.CType):
-    def is_valid(self): #ob_hash is different from Python's builtin hash
-        if not (self.ob_type.is_valid() and self.ob_type.dereference().is_valid()
-                and self.length > 0 and self.length <= 1e2 and self.ob_hash.is_valid()
-                and "str" in self.ob_type.dereference().name
-                and self.ob_type.dereference().tp_basicsize == 80):
-            return False
-
-        #bit shifting to get interned, kind, compact, ascii_tmp, and ready for ob_state
+    def parse_state(self):
         interned = kind = compact = ascii_tmp = ready = -1
 
         if (self.ob_state >> 1) & 1 and not((self.ob_state >> 0) & 1): #interned
@@ -164,53 +159,32 @@ class _PyUnicodeString(obj.CType):
         compact = int(((self.ob_state >> 5) & 1))
         ascii_tmp = int(((self.ob_state >> 6) & 1))
         ready = int(((self.ob_state >> 7) & 1))
-        
-        if interned == -1 or kind <= 0 or compact <= 0 or ascii_tmp <= 0 or ready <= 0: 
-            #ignore ready legacy or unready legacy or compact unicode
+
+        return interned, kind, compact, ascii_tmp, ready
+
+    def is_valid(self): #ob_hash is different from Python's builtin hash
+        if not (self.ob_type.is_valid() and self.ob_type.dereference().is_valid()
+                and self.length > 0 and self.length <= 1e2 and self.ob_hash.is_valid()
+                and "str" in self.ob_type.dereference().name
+                and self.ob_type.dereference().tp_basicsize == 80):
             return False
 
-        if (kind > 1):
-            print interned, kind, compact, ascii_tmp, ready
-        
-        if ascii_tmp == 1:
-            return True
-        elif ascii_tmp == 0:
-            print self.utf8_length, self.length, self.wstr_length, kind
-            print hex(self.utf8_ptr), hex(self.ob_data)
-            print hex(tmp_long)
-            return True
+        interned, kind, compact, ascii_tmp, ready = self.parse_state()
 
+        #ignore ready legacy or unready legacy or compact unicode
+        if interned == -1 or kind <= 0 or compact <= 0 or ascii_tmp <= 0 or ready <= 0: 
+            return False
+        else:
+            return True
 
     @property
     def val(self):
-        #more bit shifting for ob_state
-        interned = kind = compact = ascii_tmp = ready = 0
-        if (self.ob_state >> 1) & 1 and not((self.ob_state >> 0) & 1): #interned
-            interned = 2
-        elif not(self.ob_state >> 1) & 1 and (self.ob_state >> 0) & 1:
-            interned = 1
-        elif not(self.ob_state >> 1) & 1 and not((self.ob_state >> 0) & 1):
-            interned = 0
+        interned, kind, compact, ascii_tmp, ready = self.parse_state()
 
-        if (self.ob_state >> 4) & 1: #kind
-            if not((self.ob_state >> 3) & 1) and not((self.ob_state >> 2) & 1):
-                kind = 4
-        else:
-            if ((self.ob_state >> 3) & 1) and not((self.ob_state >> 2) & 1):
-                kind = 2
-            elif not((self.ob_state >> 3) & 1) and ((self.ob_state >> 2) & 1):
-                kind = 1
-            elif not((self.ob_state >> 3) & 1) and not((self.ob_state >> 2) & 1):
-                kind = 0
-        
-        compact = int(((self.ob_state >> 5) & 1))
-        ascii_tmp = int(((self.ob_state >> 6) & 1))
-        ready = int(((self.ob_state >> 7) & 1))
-        
-        if ascii_tmp == 1:
+        if ascii_tmp == 1: #should go here, never encountered compact unicode before
             uni_buff = self.obj_vm.zread(self.obj_offset + 48, self.length)
             return uni_buff
-        elif ascii_tmp == 0:
+        elif ascii_tmp == 0: 
             uni_buff = self.obj_vm.zread(self.obj_offset + 72, self.length)
             print uni_buff.encode("utf-8")
             return uni_buff.decode()
@@ -304,6 +278,7 @@ def brute_force_search(addr_space, obj_type_string, start, stop, class_name):
         found_head = obj.Object("_PyGC_Head",
                                   offset=tmp,
                                   vm=addr_space)
+        #Just want to access ob_type -> tp_name from UnicodeObject
         found_object = obj.Object("_PyUnicodeString",
                             offset=tmp + 32,
                             vm=addr_space)
