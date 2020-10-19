@@ -99,6 +99,14 @@ pyobjs_vtype_64 = { #Found info here: https://github.com/python/cpython/blob/3.7
             'alignment1': [308, ['void']],
             'gc': [320, ['_GC_Runtime_State']],
             'end_data': [672, ['void']]
+        }],
+        '_PyInstanceObject1': [
+        32,
+        {
+            'ob_refcnt': [0, ['long long']],  # Py_ssize_t = ssize_t
+            'ob_type': [8, ['pointer', ['_PyTypeObject']]],  # struct _typeobject *
+            'in_dict': [16, ['pointer', ['void']]],  #Points to __dict__
+            'data': [24, ['void']] 
         }]
     }
 
@@ -245,6 +253,15 @@ class _PyRuntimeState(obj.CType):
         return self.gc.gen3_head.prev_val
 
 
+class _PyInstanceObject1(obj.CType): 
+    def is_valid(self):
+        return (self.ob_type.is_valid() and self.ob_type.dereference().is_valid())
+        
+    @property
+    def name(self):
+        return self.ob_type.dereference().name
+
+
 class PythonClassTypes4(obj.ProfileModification):
     """
     Profile modifications for Python class types.  Only Linux and Mac OS,
@@ -261,7 +278,8 @@ class PythonClassTypes4(obj.ProfileModification):
             "_PyGC_Head": _PyGC_Head,
             "_GC_Runtime_State": _GC_Runtime_State,
             "_PyInterpreters": _PyInterpreters,
-            "_PyRuntimeState": _PyRuntimeState
+            "_PyRuntimeState": _PyRuntimeState,
+            "_PyInstanceObject1": _PyInstanceObject1
         })
 
 
@@ -279,7 +297,7 @@ def brute_force_search(addr_space, obj_type_string, start, stop, class_name):
                                   offset=tmp,
                                   vm=addr_space)
         #Just want to access ob_type -> tp_name from UnicodeObject
-        found_object = obj.Object("_PyUnicodeString",
+        found_object = obj.Object("_PyInstanceObject1",
                             offset=tmp + 32,
                             vm=addr_space)
         
@@ -287,8 +305,13 @@ def brute_force_search(addr_space, obj_type_string, start, stop, class_name):
             print "_PyGC_Head invalid"
             sys.exit(0)
             
-        print "curr:", hex(tmp), "next:", hex(found_head.next_val), "prev:", hex(found_head.prev_val)
-        print "type name:", found_object.ob_type.dereference().name
+        #print "curr:", hex(tmp), "next:", hex(found_head.next_val), "prev:", hex(found_head.prev_val)
+        #print "type name:", found_object.ob_type.dereference().name
+
+        if found_object.ob_type.dereference().name == class_name:
+            print "found instance of", class_name
+            print "dict located at:", hex(found_object.in_dict)
+
         if (tmp == stop):
             break
         tmp = found_head.next_val    
@@ -381,7 +404,7 @@ class linux_python3_instances(linux_pslist.linux_pslist):
                 tasks.append(task)
 
         for task in tasks:
-            for instance in find_instance(task, "model.Sequential"):
+            for instance in find_instance(task, "Sequential"):
                 yield instance
         
         #stop = timeit.default_timer()
