@@ -20,8 +20,7 @@ from volatility import utils
 PROFILE_PATH = "./Scripts/ScriptOutputs/profile_py.txt"  # PATH TO PYTHON PROFILE
 PROFILE_DATA = None
 
-
-pyobjs_vtype_64 = { #Found info here: https://github.com/python/cpython/blob/3.7/Include
+pyobjs_vtype_64 = { #Found info here: https://github.com/python/cpython/blob/3.6/Include
     '_PyTypeObject': [
         400,
         {
@@ -270,7 +269,6 @@ class _PyUnicodeString(obj.CType):
     def is_valid(self): #ob_hash is different from Python's builtin hash
         if not (self.ob_type.is_valid() and self.ob_type.dereference().is_valid()
                 and self.length > 0 and self.length <= 1e2 and self.ob_hash.is_valid()
-                and "str" in self.ob_type.dereference().name
                 and self.ob_type.dereference().tp_basicsize == 80):
             return False
 
@@ -402,10 +400,8 @@ class _PyDictKeysObject1(obj.CType):
         curr = self.get_entries_start()
         end = curr + (self.dk_nentries - 1) * 24
         ct = 0
-        print hex(curr), hex(end)
         if self.dk_refcnt == 1:
-            print "combined"
-            print self.dk_usable, self.dk_nentries
+            print "this is a combined dict"
         while (curr <= end):
             tmp_ptr = obj.Object("_PyDictKeyEntry1",
                             offset=curr,
@@ -421,7 +417,8 @@ class _PyDictKeysObject1(obj.CType):
                 elif ct == self.dk_nentries and self.dk_refcnt != 1:
                     return keys
             else:
-                print "oops"
+                pass
+                #print "oops"
             curr += 24
     
 
@@ -471,7 +468,6 @@ class _PyDictObject1(obj.CType):
             keys, values = self.ma_keys.dereference().val
             for i in range(len(keys)):
                 d[keys[i]] = self.addr_to_obj(values[i])
-                print keys[i], d[keys[i]]
 
         #not combined       
         else: 
@@ -479,7 +475,6 @@ class _PyDictObject1(obj.CType):
             values = self.values
             for i in range(self.ma_used):
                 d[keys[i]] = values[i]
-                print keys[i], d[keys[i]]
         return d
 
 
@@ -678,7 +673,7 @@ class _PyObject1(obj.CType):
             return tmp
 
 
-class PythonClassTypes4(obj.ProfileModification):
+class PythonClassTypes3(obj.ProfileModification):
     """
     Profile modifications for Python class types.  Only Linux and Mac OS,
     on 64-bit systems, are supported right now.
@@ -686,7 +681,7 @@ class PythonClassTypes4(obj.ProfileModification):
     conditions = {"os": lambda x: x in ["linux", "mac"],
                   "memory_model": lambda x: x == "64bit"}
     
-    def modification(self, profile): #writes to file somewhere (beware of duplicate names)
+    def modification(self, profile):
         profile.vtypes.update(pyobjs_vtype_64)
         profile.object_classes.update({
             "_PyTypeObject": _PyTypeObject,
@@ -713,7 +708,6 @@ def brute_force_search(addr_space, obj_type_string, start, stop, class_name):
     """
     Brute-force search an area of memory for a given object type.  Returns
     valid types as a generator.
-    134147 objects found
     """
     tmp = start
     arr = []
@@ -730,9 +724,9 @@ def brute_force_search(addr_space, obj_type_string, start, stop, class_name):
             sys.exit(0)
             
         #print "curr:", hex(tmp), "next:", hex(found_head.next_val), "prev:", hex(found_head.prev_val)
-        print "type name:", found_object.ob_type.dereference().name, hex(found_object.ob_type)
     
         if found_object.ob_type.dereference().name == class_name:
+            print "Found", found_object.ob_type.dereference().name, "at", hex(found_object.obj_offset)
             print "tp_basicsize:", found_object.ob_type.dereference().tp_basicsize
             print "tp_dictoffset:", found_object.ob_type.dereference().tp_dictoffset
             print "in_dict pointer:", hex(found_object.in_dict)
@@ -744,18 +738,24 @@ def brute_force_search(addr_space, obj_type_string, start, stop, class_name):
 
             #print __dict__ (recurse through lists and tuples)
             model_dict = found_object.in_dict.dereference().val
+            print "model.__dict__:"
             print model_dict
             print
-            print "amt of layers:", len(model_dict['_layers'])
+            print "len of model.__dict__['_layers']:", len(model_dict['_layers'])
             model_layer = model_dict['_layers'][1].in_dict.dereference().val
+            print "model.__dict__['_layers'][1].__dict__:"
             print model_layer
             print
             print "amt of trainable weights:", len(model_layer['_trainable_weights'])
             model_weights = model_layer['_trainable_weights'][1].in_dict.dereference().val
+            print "model.__dict__['_layers'][1].__dict__['_trainable_weights'][1].__dict__:"
             print model_weights
+            print
+            ret = []
+            ret.append(model_weights['_handle'])
+            print "EagerTensor:"
+            print ret
             
-            print hex(model_weights['_handle'].ob_type.dereference().tp_dictoffset)
-
             #print found_object.in_dict.dereference().val['_layers'][1].ob_type.dereference().name
             #print found_object.in_dict.dereference().val['_layers'][2].ob_type.dereference().name
 
@@ -763,7 +763,7 @@ def brute_force_search(addr_space, obj_type_string, start, stop, class_name):
             
         if (tmp == stop):
             break
-        tmp = found_head.next_val
+        tmp = found_head.next_val   
 
     return arr
 
@@ -787,7 +787,7 @@ def find_instance(task, class_name):
     Go to _PyRuntimeState -> gc -> generations -> brute force through PyGC_Head pointers
     """
     addr_space = task.get_process_address_space() 
-    
+
     _PyRuntimeLoc = find_PyRuntime()
     
     if _PyRuntimeLoc == -1:
@@ -840,9 +840,7 @@ class linux_python3_instances(linux_pslist.linux_pslist):
     """
     Pull Tensorflow model instances from a Python process's GC generations. Under development.
     Still need to:
-    1. Write Dict Object
-    2. Understand how instances are represented
-    3. Automate search for _PyRuntime
+    1. Isolate and retrieve weights and shapes
     """
     def __init__(self, config, *args, **kwargs):
         linux_pslist.linux_pslist.__init__(self, config, *args, **kwargs)
@@ -850,7 +848,7 @@ class linux_python3_instances(linux_pslist.linux_pslist):
             'PID', short_option = 'p', default = None,
                           help = 'Operate on the Python PID',
                           action = 'store', type = 'str')
-
+        self.p_map = pmap.linux_proc_maps(self,config,*args,**kwargs)
     def _validate_config(self):
         if self._config.PID is not None and len(self._config.PID.split(',')) != 1:
             debug.error("Please enter Python PID")
@@ -867,10 +865,12 @@ class linux_python3_instances(linux_pslist.linux_pslist):
         self._validate_config()
         pidstr = self._config.PID
 
+        #adds python tasks to list
         tasks = []
         for task in linux_pslist.linux_pslist.calculate(self):
             if _is_python_task(task, pidstr):
                 tasks.append(task)
+
 
         for task in tasks:
             for instance in find_instance(task, "Sequential"):
@@ -894,6 +894,6 @@ class linux_python3_instances(linux_pslist.linux_pslist):
             yield (0, [str(instance.string)])
 
     def render_text(self, outfd, data):
-        self.table_header(outfd, [("Name", "100")])
+        self.table_header(outfd, [("Dict", "70")])
         for _, output in self.generator(data):
             self.table_row(outfd, *[str(o) for o in output])
