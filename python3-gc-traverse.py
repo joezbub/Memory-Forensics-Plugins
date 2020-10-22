@@ -15,18 +15,25 @@ from volatility.plugins.linux import pslist as linux_pslist
 from volatility.renderers import TreeGrid
 from volatility import utils
 
+PROFILE_PATH = "./Scripts/ScriptOutputs/profile_py.txt"  # PATH TO PYTHON PROFILE
+PROFILE_DATA = None
+
 
 pyobjs_vtype_64 = { #Found info here: https://github.com/python/cpython/blob/3.7/Include
     '_PyTypeObject': [
-        40,
+        400,
         {
             'ob_refcnt': [0, ['long long']],  # Py_ssize_t = ssize_t
             'ob_type': [8, ['pointer', ['void']]],  # struct _typeobject *
-            'ob_size': [16, ['long long']],  # Py_ssize_t = ssize_t
-            'tp_name': [24, ['pointer', ['char']]],
-            'tp_basicsize': [32, ['long long']]
+            'ob_size': [16, ['long long']],  
+            'tp_name': [24, ['address']],
+            'tp_basicsize': [32, ['long long']],
+            'tp_itemsize': [40, ['long long']],
+            'data1': [48, ['void']],
+            'tp_dictoffset': [288, ['long long']],
+            'data2': [296, ['void']]
         }],
-    '_PyUnicodeString': [ #PyUnicodeObject already used?
+    '_PyUnicodeString': [
         80,
         {
             'ob_refcnt': [0, ['long long']],
@@ -46,7 +53,7 @@ pyobjs_vtype_64 = { #Found info here: https://github.com/python/cpython/blob/3.7
         {
             'gc_next': [0, ['unsigned long long']],
             'gc_prev': [8, ['unsigned long long']],
-            'gc_refs': [16, ['long long']]
+            'gc_refs': [16, ['long long']],
         }],
     '_GC_Runtime_State': [
         352,
@@ -85,7 +92,7 @@ pyobjs_vtype_64 = { #Found info here: https://github.com/python/cpython/blob/3.7
             'interpreters_mutex': [0, ['address']],
             'interpreters_head': [8, ['address']], 
             'interpreters_main': [16, ['address']],
-            'interpreters_next_id': [24, ['long long']]
+            'interpreters_next_id': [24, ['long long']],
         }],
     '_PyRuntimeState': [ 
         1520,
@@ -100,13 +107,102 @@ pyobjs_vtype_64 = { #Found info here: https://github.com/python/cpython/blob/3.7
             'gc': [320, ['_GC_Runtime_State']],
             'end_data': [672, ['void']]
         }],
-        '_PyInstanceObject1': [
+    '_PyDictKeyEntry1': [
+        24,
+        {
+            'me_hash': [0, ['long long']],  # Py_ssize_t = ssize_t
+            'me_key': [8, ['pointer', ['_PyUnicodeString']]],
+            'me_value': [16, ['address']]
+        }],
+    '_PyDictKeysObject1': [
+        48,
+        {
+            'dk_refcnt': [0, ['long long']],  # Py_ssize_t = ssize_t
+            'dk_size': [8, ['long long']],  # Py_ssize_t = ssize_t
+            'dk_lookup': [16, ['pointer', ['void']]], 
+            'dk_usable': [24, ['long long']], 
+            'dk_nentries': [32, ['long long']],
+            'dk_indices': [40, ['void']]
+        }],
+    '_PyDictObject1': [
+        48,
+        {
+            'ob_refcnt': [0, ['long long']],  # Py_ssize_t = ssize_t
+            'ob_type': [8, ['pointer', ['_PyTypeObject']]],  # struct _typeobject *
+            'ma_used': [16, ['long long']],  # number of items
+            'ma_version_tag': [24, ['unsigned long long']], #unique identifier
+            'ma_keys': [32, ['pointer', ['_PyDictKeysObject1']]], #PyDictKeysObject
+            'ma_values': [40, ['pointer', ['void']]] #just values
+        }],
+    '_PyInstanceObject1': [
         32,
         {
             'ob_refcnt': [0, ['long long']],  # Py_ssize_t = ssize_t
             'ob_type': [8, ['pointer', ['_PyTypeObject']]],  # struct _typeobject *
-            'in_dict': [16, ['pointer', ['void']]],  #Points to __dict__
-            'data': [24, ['void']] 
+            'in_dict': [16, ['pointer', ['_PyDictObject1']]],  #Points to __dict__
+            'data': [24, ['void']]
+        }],
+    '_PyFloatObject1': [
+        24,
+        {
+            'ob_refcnt': [0, ['long long']],  # Py_ssize_t = ssize_t
+            'ob_type': [8, ['pointer', ['_PyTypeObject']]],  # struct _typeobject *
+            'ob_fval': [16, ['long long']]  #double ob_fval //will convert later
+        }],
+    '_PyTupleObject1': [
+        32,
+        {
+            'ob_refcnt': [0, ['long long']],  # Py_ssize_t = ssize_t
+            'ob_type': [8, ['pointer', ['_PyTypeObject']]],  # struct _typeobject *
+            'ob_size': [16, ['long long']],  # Py_ssize_t = ssize_t
+            'ob_item': [24, ['pointer', ['void']]]
+        }],
+    '_PyLongObject1': [
+        32,
+        {
+            'ob_refcnt': [0, ['long long']],  # Py_ssize_t = ssize_t
+            'ob_type': [8, ['pointer', ['_PyTypeObject']]],  # struct _typeobject *
+            'ob_size': [16, ['long long']],
+            'ob_digit': [24, ['unsigned int']]
+        }],
+    '_PyListObject1': [
+        40,
+        {
+            'ob_refcnt': [0, ['long long']],  # Py_ssize_t = ssize_t
+            'ob_type': [8, ['pointer', ['_PyTypeObject']]],  # struct _typeobject *
+            'ob_size': [16, ['long long']],  # Py_ssize_t = ssize_t
+            'ob_item': [24, ['pointer', ['void']]],
+            'allocated': [32, ['long long']]
+        }],
+    '_PyBoolObject1': [
+        32,
+        {
+            'ob_refcnt': [0, ['long long']],  # Py_ssize_t = ssize_t
+            'ob_type': [8, ['pointer', ['_PyTypeObject']]],  # struct _typeobject *
+            'ob_size': [16, ['long long']],
+            'ob_digit': [24, ['unsigned int']]
+        }],
+    '_PyEagerTensor1': [
+        152,
+        {
+            'ob_refcnt': [0, ['long long']],  # Py_ssize_t = ssize_t
+            'ob_type': [8, ['pointer', ['_PyTypeObject']]],  # struct _typeobject *
+            'unused': [16, ['void']],
+            'handle': [80, ['address']],
+            'ob_id': [88, ['long long']],
+            'is_packed': [96, ['long long']],
+            'handle_data': [104, ['address']],
+            'tensor_shape': [112, ['address']],
+            'ob_status': [120, ['void']],
+            'context': [128, ['address']],
+            'weakreflist': [136, ['address']],
+            'ob_dict': [144, ['_PyDictObject1']],
+        }],
+    '_PyObject1': [
+        16,
+        {
+            'ob_refcnt': [0, ['long long']],  # Py_ssize_t = ssize_t
+            'ob_type': [8, ['pointer', ['_PyTypeObject']]],  # struct _typeobject *
         }]
     }
 
@@ -123,9 +219,9 @@ class _PyTypeObject(obj.CType):
     @property
     def name(self):
         ret = ""
-        for i in range(41):
+        for i in range(50):
             tmp = self.obj_vm.zread(self.tp_name + i, 1)
-            if tmp == '\x00':
+            if ord(tmp) == 0:
                 if (i >= 2):
                     return ret
                 else:
@@ -138,8 +234,7 @@ class _PyTypeObject(obj.CType):
     def is_valid(self):
         if not (self.ob_type.is_valid() and self.tp_name.is_valid() and self.tp_basicsize.is_valid()):
             return False
-        s = self.name
-        return (s != "invalid")
+        return True
 
 
 class _PyUnicodeString(obj.CType):
@@ -253,13 +348,332 @@ class _PyRuntimeState(obj.CType):
         return self.gc.gen3_head.prev_val
 
 
+class _PyDictKeyEntry1(obj.CType):
+    def is_valid(self):
+        """
+        Key pointers should be valid and should point to a PyUnicodeString
+        """
+        return (self.me_key.is_valid() and self.me_key.dereference().is_valid())
+            
+    @property
+    def key(self):
+        return self.me_key.dereference().val
+    
+    @property
+    def value(self):
+        return self.me_value
+
+
+class _PyDictKeysObject1(obj.CType):
+    def get_entries_start(self):
+        """
+        Indices must be: 0 <= indice < USABLE_FRACTION(dk_size).
+        The size in bytes of an indice depends on dk_size:
+        - 1 byte if dk_size <= 0xff (char*)
+        - 2 bytes if dk_size <= 0xffff (int16_t*)
+        - 4 bytes if dk_size <= 0xffffffff (int32_t*)
+        - 8 bytes otherwise (int64_t*)
+        """
+        indices_offset, _ = self.members['dk_indices']
+        
+        if (self.dk_size <= 0xff):
+            ind_sz = 1
+        elif (self.dk_size <= 0xffff):
+            ind_sz = 2
+        elif (self.dk_size <= 0xffffffff):
+            ind_sz = 4
+        else:
+            ind_sz = 8
+        return self.obj_offset + indices_offset + self.dk_size * ind_sz
+
+
+    def is_valid(self):
+        return (#address of lookup function
+                self.dk_lookup.is_valid() 
+                #dk_size is size of hash table (must be power of 2)
+                and (self.dk_size & (self.dk_size - 1)) == 0)
+
+    @property
+    def val(self):
+        keys = []
+        val_ptrs = []
+        curr = self.get_entries_start()
+        end = curr + (self.dk_nentries - 1) * 24
+        ct = 0
+        print hex(curr), hex(end)
+        if self.dk_refcnt == 1:
+            print "combined"
+            print self.dk_usable, self.dk_nentries
+        while (curr <= end):
+            tmp_ptr = obj.Object("_PyDictKeyEntry1",
+                            offset=curr,
+                            vm=self.obj_vm)
+            ct += 1
+            if tmp_ptr.is_valid():
+                keys.append(tmp_ptr.key)
+                if self.dk_refcnt == 1:
+                    val_ptrs.append(tmp_ptr.value)
+                
+                if ct == self.dk_nentries and self.dk_refcnt == 1:
+                    return keys, val_ptrs
+                elif ct == self.dk_nentries and self.dk_refcnt != 1:
+                    return keys
+            else:
+                print "oops"
+            curr += 24
+    
+
+class _PyDictObject1(obj.CType):
+    def addr_to_obj(self, addr):
+        tmp = obj.Object("_PyObject1",
+                        offset=addr,
+                        vm=self.obj_vm)
+        return tmp.val
+
+    def is_valid(self):
+        return (self.ob_type.is_valid()
+                and self.ma_used >= 0 and self.ma_keys.is_valid() 
+                and self.ma_keys.dereference().is_valid()
+                and (self.ma_values == 0 or self.ma_values.is_valid()))
+
+    @property
+    def keys(self): #returns array of key strings
+        return self.ma_keys.dereference().val
+
+    @property
+    def values(self): #returns array of addresses of PyObjects
+        ptrs = []
+        ret = []
+        curr = self.ma_values
+        end = self.ma_values + (self.ma_used - 1) * 8
+        ct = 0
+        while (curr <= end):
+            tmp_ptr = obj.Object("address",
+                            offset=curr,
+                            vm=self.obj_vm)
+            if tmp_ptr.is_valid():
+                ct += 1
+                ptrs.append(tmp_ptr)
+                if ct == self.ma_used:
+                    break
+            curr += 8
+        for addr in ptrs:
+            ret.append(self.addr_to_obj(addr))
+        return ret
+
+    @property
+    def val(self):
+        d = {}
+        #combined
+        if self.ma_keys.dereference().dk_refcnt == 1 and self.ma_values == 0:
+            keys, values = self.ma_keys.dereference().val
+            for i in range(len(keys)):
+                d[keys[i]] = self.addr_to_obj(values[i])
+                print keys[i], d[keys[i]]
+
+        #not combined       
+        else: 
+            keys = self.keys
+            values = self.values
+            for i in range(self.ma_used):
+                d[keys[i]] = values[i]
+                print keys[i], d[keys[i]]
+        return d
+
+
 class _PyInstanceObject1(obj.CType): 
     def is_valid(self):
-        return (self.ob_type.is_valid() and self.ob_type.dereference().is_valid())
+        return (self.ob_type.is_valid() and self.ob_type.dereference().is_valid()
+                and self.in_dict.is_valid() and self.in_dict.dereference().is_valid())
         
     @property
     def name(self):
         return self.ob_type.dereference().name
+    
+    @property
+    def val(self):
+        return self.in_dict.dereference().val
+
+
+class _PyFloatObject1(obj.CType):
+    def is_valid(self):
+        return (self.ob_type.is_valid() and "float" in self.ob_type.dereference().name)
+
+    @property
+    def val(self):
+        return float(ctypes.c_double.from_buffer(ctypes.c_longlong(self.ob_fval)).value)
+
+
+class _PyTupleObject1(obj.CType):
+    def addr_to_obj(self, addr):
+        tmp = obj.Object("_PyObject1",
+                        offset=addr,
+                        vm=self.obj_vm)
+        return tmp.val
+
+    def is_valid(self):
+        return (self.ob_type.is_valid() and "tuple" in self.ob_type.dereference().name)
+    
+    @property
+    def val(self):
+        ptr_offset, _ = self.members['ob_item']
+        ptrs = []
+        ret = []
+        for i in range(self.ob_size):
+            tmp_ptr = obj.Object("address",
+                            offset=self.obj_offset + ptr_offset + 8 * i,
+                            vm=self.obj_vm)
+            ptrs.append(tmp_ptr)
+        for addr in ptrs:
+            ret.append(self.addr_to_obj(addr))
+        return tuple(ret)
+
+
+class _PyLongObject1(obj.CType): #unfinished
+    """
+    tp_itemsize = 4 #digits are unsigned ints
+    /* Long integer representation.
+    The absolute value of a number is equal to
+            SUM(for i=0 through abs(ob_size)-1) ob_digit[i] * 2**(SHIFT*i)
+    Negative numbers are represented with ob_size < 0;
+    zero is represented by ob_size == 0.
+    In a normalized number, ob_digit[abs(ob_size)-1] (the most significant
+    digit) is never zero.  Also, in all cases, for all valid i,
+            0 <= ob_digit[i] <= MASK.
+    The allocation function takes care of allocating extra memory
+    so that ob_digit[0] ... ob_digit[abs(ob_size)-1] are actually available.
+    CAUTION:  Generic code manipulating subtypes of PyVarObject has to
+    aware that ints abuse  ob_size's sign bit.
+    */
+    """
+    def is_valid(self):
+        return (self.ob_type.is_valid() and "int" in self.ob_type.dereference().name
+                and self.ob_type.dereference().tp_basicsize == 24)
+
+    @property
+    def val(self):
+        if self.ob_size == 0:
+            return 0
+        mult = self.ob_size / abs(self.ob_size)
+        ret = 0
+
+        indices_offset, _ = self.members['ob_digit']
+        curr = self.obj_offset + indices_offset
+        end = curr + 4 * (abs(self.ob_size) - 1)
+        ct = 0
+        while (curr <= end):
+            tmp = obj.Object("unsigned int",
+                            offset=curr,
+                            vm=self.obj_vm)
+            if tmp.is_valid():
+                ret += (tmp * (2 ** (30 * ct)))
+                ct += 1
+                if ct == abs(self.ob_size):
+                    return int(ret * mult)
+            curr += 4
+
+
+class _PyListObject1(obj.CType):
+    def addr_to_obj(self, addr):
+        tmp = obj.Object("_PyObject1",
+                        offset=addr,
+                        vm=self.obj_vm)
+        return tmp.val
+
+    def is_valid(self):
+        """
+        /* ob_item contains space for 'allocated' elements.  The number
+        * currently in use is ob_size.
+        * Invariants:
+        *     0 <= ob_size <= allocated
+        *     len(list) == ob_size
+        *     ob_item == NULL implies ob_size == allocated == 0
+        * list.sort() temporarily sets allocated to -1 to detect mutations.
+        *
+        * Items must normally not be NULL, except during construction when
+        * the list is not yet visible outside the function that builds it.
+        */
+        """
+        return (self.ob_type.is_valid() and self.ob_item.is_valid() 
+                and "list" in self.ob_type.dereference().name 
+                and self.ob_size <= self.allocated and self.ob_size > 0)
+    
+    @property
+    def val(self):
+        ptrs = []
+        ret = []
+        curr = self.ob_item
+        end = self.ob_item + (self.allocated - 1) * 8
+        ct = 0
+        while (curr <= end):
+            tmp_ptr = obj.Object("address",
+                            offset=curr,
+                            vm=self.obj_vm)
+            if tmp_ptr.is_valid():
+                ct += 1
+                ptrs.append(tmp_ptr)
+                if ct == self.ob_size:
+                    break
+            curr += 8
+        for addr in ptrs:
+            ret.append(self.addr_to_obj(addr))
+        return ret
+
+
+class _PyBoolObject1(obj.CType):
+    def is_valid(self):
+        return (self.ob_type.is_valid() and self.ob_type.dereference().is_valid()
+                and "bool" in self.ob_type.dereference().name 
+                and self.ob_type.dereference().tp_basicsize == 32)
+
+    @property
+    def val(self):
+        return self.ob_digit != 0
+
+
+class _PyEagerTensor1(obj.CType):
+    def is_valid(self):
+        return (self.ob_type.is_valid() and self.ob_type.dereference().is_valid()
+                and self.ob_type.dereference().name == "tensorflow.python.framework.ops.EagerTensor"
+                and self.ob_type.dereference().tp_basicsize == 152)
+
+    @property
+    def val(self):
+        return self.ob_digit != 0
+
+
+class _PyObject1(obj.CType):
+    def get_type(self, s):
+        pymap = ({
+            "dict": "_PyDictObject1",
+            "int": "_PyLongObject1",
+            "str": "_PyUnicodeString",
+            "float": "_PyFloatObject1",
+            "list": "_PyListObject1",
+            "bool": "_PyBoolObject1",
+            "tuple": "_PyTupleObject1",
+            "tensorflow.python.framework.ops.EagerTensor": "_PyEagerTensor1"
+        })
+        if not pymap.has_key(s):
+            return "_PyObject1"
+        return pymap[s]
+
+    def is_valid(self):
+        return (self.ob_type.is_valid() and self.ob_type.dereference().is_valid())
+
+    @property
+    def val(self):
+        obj_string = self.get_type(self.ob_type.dereference().name)
+        if (self.ob_type.dereference().tp_basicsize == 32 
+            and self.ob_type.dereference().tp_dictoffset == 16):
+            obj_string = "_PyInstanceObject1"
+        tmp = obj.Object(obj_string, offset=self.obj_offset, vm=self.obj_vm)
+        if obj_string not in ["_PyEagerTensor1", "_PyInstanceObject1", "_PyObject1", "_PyDictObject1"]:
+            return tmp.val
+        elif obj_string == "_PyObject1" and tmp.ob_type.dereference().name == "NoneType":
+            return None
+        else:
+            return tmp
 
 
 class PythonClassTypes4(obj.ProfileModification):
@@ -279,7 +693,17 @@ class PythonClassTypes4(obj.ProfileModification):
             "_GC_Runtime_State": _GC_Runtime_State,
             "_PyInterpreters": _PyInterpreters,
             "_PyRuntimeState": _PyRuntimeState,
-            "_PyInstanceObject1": _PyInstanceObject1
+            "_PyDictKeyEntry1": _PyDictKeyEntry1,
+            "_PyDictKeysObject1": _PyDictKeysObject1,
+            "_PyDictObject1": _PyDictObject1,
+            "_PyInstanceObject1": _PyInstanceObject1,
+            "_PyFloatObject1": _PyFloatObject1,
+            "_PyTupleObject1": _PyTupleObject1,
+            "_PyLongObject1": _PyLongObject1,
+            "_PyListObject1": _PyListObject1,
+            "_PyBoolObject1": _PyBoolObject1,
+            "_PyEagerTensor1": _PyEagerTensor1,
+            "_PyObject1": _PyObject1
         })
 
 
@@ -287,16 +711,14 @@ def brute_force_search(addr_space, obj_type_string, start, stop, class_name):
     """
     Brute-force search an area of memory for a given object type.  Returns
     valid types as a generator.
+    134147 objects found
     """
     tmp = start
     arr = []
 
     while True:
         arr.append(tmp)
-        found_head = obj.Object("_PyGC_Head",
-                                  offset=tmp,
-                                  vm=addr_space)
-        #Just want to access ob_type -> tp_name from UnicodeObject
+        found_head = obj.Object("_PyGC_Head", offset=tmp, vm=addr_space)
         found_object = obj.Object("_PyInstanceObject1",
                             offset=tmp + 32,
                             vm=addr_space)
@@ -306,17 +728,56 @@ def brute_force_search(addr_space, obj_type_string, start, stop, class_name):
             sys.exit(0)
             
         #print "curr:", hex(tmp), "next:", hex(found_head.next_val), "prev:", hex(found_head.prev_val)
-        #print "type name:", found_object.ob_type.dereference().name
-
+        print "type name:", found_object.ob_type.dereference().name, hex(found_object.ob_type)
+    
         if found_object.ob_type.dereference().name == class_name:
-            print "found instance of", class_name
-            print "dict located at:", hex(found_object.in_dict)
+            print "tp_basicsize:", found_object.ob_type.dereference().tp_basicsize
+            print "tp_dictoffset:", found_object.ob_type.dereference().tp_dictoffset
+            print "in_dict pointer:", hex(found_object.in_dict)
+            print "Num items in dict:", found_object.in_dict.dereference().ma_used
+            print "ma_version_tag:", found_object.in_dict.dereference().ma_version_tag
+            print "ma_keys pointer:", hex(found_object.in_dict.dereference().ma_keys)
+            print "ma_values pointer:", hex(found_object.in_dict.dereference().ma_values)
+            print
 
+            #print __dict__ (recurse through lists and tuples)
+            model_dict = found_object.in_dict.dereference().val
+            print model_dict
+            print
+            print "amt of layers:", len(model_dict['_layers'])
+            model_layer = model_dict['_layers'][1].in_dict.dereference().val
+            print model_layer
+            print
+            print "amt of trainable weights:", len(model_layer['_trainable_weights'])
+            model_weights = model_layer['_trainable_weights'][1].in_dict.dereference().val
+            print model_weights
+            
+            print hex(model_weights['_handle'].ob_type.dereference().tp_dictoffset)
+
+            #print found_object.in_dict.dereference().val['_layers'][1].ob_type.dereference().name
+            #print found_object.in_dict.dereference().val['_layers'][2].ob_type.dereference().name
+
+            sys.exit(0)
+            
         if (tmp == stop):
             break
-        tmp = found_head.next_val    
+        tmp = found_head.next_val
 
     return arr
+
+
+def get_profile_data():
+    with open(PROFILE_PATH) as json_file:
+        profile_data = json.load(json_file)
+    return profile_data
+
+
+def find_PyRuntime():
+    profile_data = get_profile_data()
+    for p in profile_data['globals']:
+        if p['name'] == '_PyRuntime':
+            return int(p['offset'],16)
+    return -1
 
 
 def find_instance(task, class_name):
@@ -324,9 +785,16 @@ def find_instance(task, class_name):
     Go to _PyRuntimeState -> gc -> generations -> brute force through PyGC_Head pointers
     """
     addr_space = task.get_process_address_space() 
-
+    heaps = get_heaps_and_anon(task)
+    
+    _PyRuntimeLoc = find_PyRuntime()
+    
+    if _PyRuntimeLoc == -1:
+        print "Failed to find any _pyruntime location"
+        sys.exit(0)
+    
     pyruntime = obj.Object("_PyRuntimeState",
-                                  offset=0xaa5560, #harcoded address of _PyRuntime (found in ELF header)
+                                  offset=_PyRuntimeLoc,
                                   vm=addr_space)
     if not pyruntime.is_valid():
         print "Not _PyRuntimeState"
