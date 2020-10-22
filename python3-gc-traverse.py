@@ -5,6 +5,8 @@ import struct
 import sys
 import time
 import timeit
+import io
+import json
 
 from itertools import groupby
 
@@ -785,7 +787,6 @@ def find_instance(task, class_name):
     Go to _PyRuntimeState -> gc -> generations -> brute force through PyGC_Head pointers
     """
     addr_space = task.get_process_address_space() 
-    heaps = get_heaps_and_anon(task)
     
     _PyRuntimeLoc = find_PyRuntime()
     
