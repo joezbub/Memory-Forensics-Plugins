@@ -2,8 +2,9 @@
 Volatility plugins to find self-driving car information on a [CARLA](https://carla.org) memory dump. Currently, there are five plugins: `linux_python3_instances`, `linux_python3_strings`, `linux_find_instances`, `linux_python2_strings`, and `testplug` which are explained below.
 
 # Usage
+Clone this repository into your Volatility directory. Install dependencies for `profileGen.py` through `pip install pyelftools` (must be Python 3). Make sure that the input path in `python-gc-traverse.py` and the output paths in `profileGen.py` are correct.
 
-Clone this repository into your Volatility directory.
+To use the following plugins, we need to create a json profile of the python binary for the Volatility plugin. Run the script `profileGen.py` with `python3 profileGen.py ./ELFs/*PYTHON BINARY*`, and a profile should be generated in `ScriptOutputs`.
 
 ## linux_python3_instances
 To execute the plugin found in `python3-gc-traverse.py`, execute:
