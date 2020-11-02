@@ -199,6 +199,21 @@ pyobjs_vtype_64 = { #Found info here: https://github.com/python/cpython/blob/3.6
             'weakreflist': [136, ['address']],
             'ob_dict': [144, ['_PyDictObject1']],
         }],
+    '_PyDimension1': [
+        32,
+        {
+            'ob_refcnt': [0, ['long long']],  # Py_ssize_t = ssize_t
+            'ob_type': [8, ['pointer', ['_PyTypeObject']]],  # struct _typeobject *
+            'ob_dim': [16, ['pointer', ['_PyLongObject1']]],
+            'layer_ptr': [24, ['pointer', ['void']]]
+        }],
+    '_TensorShape1': [
+        32,
+        {
+            'ob_refcnt': [0, ['long long']],  # Py_ssize_t = ssize_t
+            'ob_type': [8, ['pointer', ['_PyTypeObject']]],  # struct _typeobject *
+            'ob_list': [16, ['pointer', ['_PyListObject1']]]
+        }],
     '_PyObject1': [
         16,
         {
@@ -394,14 +409,13 @@ class _PyDictKeysObject1(obj.CType):
                 and (self.dk_size & (self.dk_size - 1)) == 0)
 
     @property
-    def val(self):
+    def val_combined(self):
         keys = []
         val_ptrs = []
         curr = self.get_entries_start()
         end = curr + (self.dk_nentries - 1) * 24
         ct = 0
-        if self.dk_refcnt == 1:
-            print "this is a combined dict"
+        #print "this is a combined dict"
         while (curr <= end):
             tmp_ptr = obj.Object("_PyDictKeyEntry1",
                             offset=curr,
@@ -409,12 +423,30 @@ class _PyDictKeysObject1(obj.CType):
             ct += 1
             if tmp_ptr.is_valid():
                 keys.append(tmp_ptr.key)
-                if self.dk_refcnt == 1:
-                    val_ptrs.append(tmp_ptr.value)
-                
-                if ct == self.dk_nentries and self.dk_refcnt == 1:
+                val_ptrs.append(tmp_ptr.value)
+                if ct == self.dk_nentries:
                     return keys, val_ptrs
-                elif ct == self.dk_nentries and self.dk_refcnt != 1:
+            else:
+                pass
+                #print "oops"
+            curr += 24
+    
+    @property
+    def val_reg(self):
+        keys = []
+        val_ptrs = []
+        curr = self.get_entries_start()
+        end = curr + (self.dk_nentries - 1) * 24
+        ct = 0
+        #print "not combined"
+        while (curr <= end):
+            tmp_ptr = obj.Object("_PyDictKeyEntry1",
+                            offset=curr,
+                            vm=self.obj_vm)
+            ct += 1
+            if tmp_ptr.is_valid():
+                keys.append(tmp_ptr.key)
+                if ct == self.dk_nentries:
                     return keys
             else:
                 pass
@@ -434,10 +466,6 @@ class _PyDictObject1(obj.CType):
                 and self.ma_used >= 0 and self.ma_keys.is_valid() 
                 and self.ma_keys.dereference().is_valid()
                 and (self.ma_values == 0 or self.ma_values.is_valid()))
-
-    @property
-    def keys(self): #returns array of key strings
-        return self.ma_keys.dereference().val
 
     @property
     def values(self): #returns array of addresses of PyObjects
@@ -463,15 +491,16 @@ class _PyDictObject1(obj.CType):
     @property
     def val(self):
         d = {}
+
         #combined
         if self.ma_keys.dereference().dk_refcnt == 1 and self.ma_values == 0:
-            keys, values = self.ma_keys.dereference().val
+            keys, values = self.ma_keys.dereference().val_combined
             for i in range(len(keys)):
                 d[keys[i]] = self.addr_to_obj(values[i])
 
         #not combined       
         else: 
-            keys = self.keys
+            keys = self.ma_keys.dereference().val_reg
             values = self.values
             for i in range(self.ma_used):
                 d[keys[i]] = values[i]
@@ -639,6 +668,26 @@ class _PyEagerTensor1(obj.CType):
         return self.ob_digit != 0
 
 
+class _PyDimension1(obj.CType):
+    def is_valid(self):
+        return (self.ob_type.is_valid() and self.ob_type.dereference().is_valid()
+                and "Dimension" in self.ob_type.dereference().name)
+
+    @property
+    def val(self):
+        return self.ob_dim.dereference().val
+
+
+class _TensorShape1(obj.CType):
+    def is_valid(self):
+        return (self.ob_type.is_valid() and self.ob_type.dereference().is_valid()
+                and "TensorShape" in self.ob_type.dereference().name)
+
+    @property
+    def val(self):
+        return self.ob_list.dereference().val
+
+
 class _PyObject1(obj.CType):
     def get_type(self, s):
         pymap = ({
@@ -649,7 +698,9 @@ class _PyObject1(obj.CType):
             "list": "_PyListObject1",
             "bool": "_PyBoolObject1",
             "tuple": "_PyTupleObject1",
-            "tensorflow.python.framework.ops.EagerTensor": "_PyEagerTensor1"
+            "tensorflow.python.framework.ops.EagerTensor": "_PyEagerTensor1",
+            "Dimension": "_PyDimension1",
+            "TensorShape": "_TensorShape1"
         })
         if not pymap.has_key(s):
             return "_PyObject1"
@@ -665,7 +716,7 @@ class _PyObject1(obj.CType):
             and self.ob_type.dereference().tp_dictoffset == 16):
             obj_string = "_PyInstanceObject1"
         tmp = obj.Object(obj_string, offset=self.obj_offset, vm=self.obj_vm)
-        if obj_string not in ["_PyEagerTensor1", "_PyInstanceObject1", "_PyObject1", "_PyDictObject1"]:
+        if obj_string not in ["_PyEagerTensor1", "_PyInstanceObject1", "_PyObject1", "_PyDictObject1", "_TensorShape1"]:
             return tmp.val
         elif obj_string == "_PyObject1" and tmp.ob_type.dereference().name == "NoneType":
             return None
@@ -700,6 +751,8 @@ class PythonClassTypes3(obj.ProfileModification):
             "_PyListObject1": _PyListObject1,
             "_PyBoolObject1": _PyBoolObject1,
             "_PyEagerTensor1": _PyEagerTensor1,
+            "_PyDimension1": _PyDimension1,
+            "_TensorShape1": _TensorShape1,
             "_PyObject1": _PyObject1
         })
 
@@ -708,10 +761,12 @@ def brute_force_search(addr_space, obj_type_string, start, stop, class_name):
     """
     Brute-force search an area of memory for a given object type.  Returns
     valid types as a generator.
+    - 136883 -> 149033 objects found for trained MNIST
+    - After trained, Sequential moved to Generation 3
     """
     tmp = start
     arr = []
-
+    
     while True:
         arr.append(tmp)
         found_head = obj.Object("_PyGC_Head", offset=tmp, vm=addr_space)
@@ -724,7 +779,7 @@ def brute_force_search(addr_space, obj_type_string, start, stop, class_name):
             sys.exit(0)
             
         #print "curr:", hex(tmp), "next:", hex(found_head.next_val), "prev:", hex(found_head.prev_val)
-    
+        
         if found_object.ob_type.dereference().name == class_name:
             print "Found", found_object.ob_type.dereference().name, "at", hex(found_object.obj_offset)
             print "tp_basicsize:", found_object.ob_type.dereference().tp_basicsize
@@ -741,29 +796,44 @@ def brute_force_search(addr_space, obj_type_string, start, stop, class_name):
             print "model.__dict__:"
             print model_dict
             print
-            print "len of model.__dict__['_layers']:", len(model_dict['_layers'])
-            model_layer = model_dict['_layers'][1].in_dict.dereference().val
-            print "model.__dict__['_layers'][1].__dict__:"
-            print model_layer
-            print
-            print "amt of trainable weights:", len(model_layer['_trainable_weights'])
-            model_weights = model_layer['_trainable_weights'][1].in_dict.dereference().val
-            print "model.__dict__['_layers'][1].__dict__['_trainable_weights'][1].__dict__:"
-            print model_weights
-            print
-            ret = []
-            ret.append(model_weights['_handle'])
-            print "EagerTensor:"
-            print ret
-            
-            #print found_object.in_dict.dereference().val['_layers'][1].ob_type.dereference().name
-            #print found_object.in_dict.dereference().val['_layers'][2].ob_type.dereference().name
+            print "Number of layers:", len(model_dict['_layers'])
+            for i in range(len(model_dict['_layers'])):
+                print
+                model_layer = model_dict['_layers'][i].in_dict.dereference().val
+                print "Layer Name:", model_layer['_name']
+                
+                #print model_layer
 
-            sys.exit(0)
-            
+                if ("input" in model_layer['_name']):
+                    print "Input Shape:", list(model_layer['_batch_input_shape'])
+                    continue
+
+                if not model_layer.has_key("_trainable_weights"):
+                    print "No Trainable Weights Key"
+                    continue
+
+                print "amt of trainable weights:", len(model_layer['_trainable_weights'])
+                if (len(model_layer['_non_trainable_weights']) > 0):
+                    print "Non trainable weights len > 0"
+                    print model_layer
+                    sys.exit(0)
+                
+                for j in range(len(model_layer['_trainable_weights'])):
+                    model_weights = model_layer['_trainable_weights'][j].in_dict.dereference().val
+                    print "Handle Name:", model_weights['_handle_name']
+                    print "Shape:", model_weights['_shape'].val
+                    #print model_weights
+                    ret = []
+                    ret.append(model_weights['_handle'])
+                    print "EagerTensor:"
+                    print ret
+
+            sys.exit(0) #temporary
+            break
+        
         if (tmp == stop):
             break
-        tmp = found_head.next_val   
+        tmp = found_head.next_val
 
     return arr
 
@@ -786,6 +856,9 @@ def find_instance(task, class_name):
     """
     Go to _PyRuntimeState -> gc -> generations -> brute force through PyGC_Head pointers
     """
+
+    start = timeit.default_timer()
+
     addr_space = task.get_process_address_space() 
 
     _PyRuntimeLoc = find_PyRuntime()
@@ -802,12 +875,13 @@ def find_instance(task, class_name):
         sys.exit(0)
 
     found_locs = []
+    
     found_locs.extend(brute_force_search(
             addr_space=addr_space,
             obj_type_string="_PyGC_Head",
             start=pyruntime.gen1_next,
             stop=pyruntime.gen1_prev,
-            class_name=class_name))
+           class_name=class_name))
     found_locs.extend(brute_force_search(
             addr_space=addr_space,
             obj_type_string="_PyGC_Head",
@@ -822,13 +896,15 @@ def find_instance(task, class_name):
             class_name=class_name))
 
     print len(found_locs), "objects found"
+    stop = timeit.default_timer()
+    print("Runtime: {0}".format(stop - start))
     sys.exit(0)
     return found_locs
 
 
 def _is_python_task(task, pidstr):
     """
-    Checks if the task has the Python PID
+    Checks if the task has the CARLA PID
     """
     if str(task.pid) != pidstr:
         return False
@@ -836,7 +912,7 @@ def _is_python_task(task, pidstr):
         return True
 
 
-class linux_python3_instances(linux_pslist.linux_pslist):
+class linux_find_instances3(linux_pslist.linux_pslist):
     """
     Pull Tensorflow model instances from a Python process's GC generations. Under development.
     Still need to:
@@ -846,12 +922,12 @@ class linux_python3_instances(linux_pslist.linux_pslist):
         linux_pslist.linux_pslist.__init__(self, config, *args, **kwargs)
         self._config.add_option(
             'PID', short_option = 'p', default = None,
-                          help = 'Operate on the Python PID',
+                          help = 'Operate on the CARLA Process ID',
                           action = 'store', type = 'str')
-        self.p_map = pmap.linux_proc_maps(self,config,*args,**kwargs)
+
     def _validate_config(self):
         if self._config.PID is not None and len(self._config.PID.split(',')) != 1:
-            debug.error("Please enter Python PID")
+            debug.error("Please enter the CARLA Python API process PID")
         
     def calculate(self):
         """
@@ -865,12 +941,10 @@ class linux_python3_instances(linux_pslist.linux_pslist):
         self._validate_config()
         pidstr = self._config.PID
 
-        #adds python tasks to list
         tasks = []
         for task in linux_pslist.linux_pslist.calculate(self):
             if _is_python_task(task, pidstr):
                 tasks.append(task)
-
 
         for task in tasks:
             for instance in find_instance(task, "Sequential"):
