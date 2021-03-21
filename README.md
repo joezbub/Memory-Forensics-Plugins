@@ -1,24 +1,24 @@
-# CARLA Volatility Plugins
-Volatility plugins to find self-driving car information on a [CARLA](https://carla.org) memory dump. Currently, there are five plugins: `linux_python3_instances`, `linux_python3_strings`, `linux_find_instances`, `linux_python2_strings`, and `testplug` which are explained below.
+# Memory Forensics Plugins
+Volatility plugins to recover machine learning model attributes. Currently, there are five plugins: `linux_find_instances3`, `linux_python3_strings`, `linux_find_instances`, `linux_python2_strings`, and `testplug`.
 
 # Usage
 Clone this repository into your Volatility directory. Install dependencies for `profileGen.py` through `pip install pyelftools` (must be Python 3). Make sure that the input path in `python-gc-traverse.py` and the output paths in `profileGen.py` are correct.
 
 To use the following plugins, we need to create a json profile of the python binary for the Volatility plugin. Run the script `profileGen.py` with `python3 profileGen.py ./ELFs/*PYTHON BINARY*`, and a profile should be generated in `ScriptOutputs`.
 
-## linux_python3_instances
+## linux_find_instances3
 To execute the plugin found in `python3-gc-traverse.py`, execute:
-<pre><code>$ python vol.py --plugins=./CARLA-Volatility-Plugins/ --profile=*YOUR LINUX PROFILE* -f *PATH TO MEMORY DUMP* linux_python3_instances -p *Python PID*</code></pre>
+<pre><code>$ python vol.py --plugins=./Memory-Forensics-Plugins/ --profile=*YOUR LINUX PROFILE* -f *PATH TO MEMORY DUMP* linux_find_instances3 -p *Python PID*</code></pre>
 
-Address of _PyRuntime currently needs to be hardcoded. The value can be found through a `readelf -s`. The plugin will verify the address of the _PyRuntime struct and proceed to traverse through the Garbage Collector generations which generally track instances of non-atomic types. Import the `gc` module and use the `gc_is_tracked()` function to check. 
+Address of _PyRuntime will be read from input path taken from profileGen.py. The plugin will verify the address of the _PyRuntime struct and proceed to traverse through the Python's Garbage Collector generations which generally track instances of non-atomic types. It will identify the keras model and recover weights, shapes, and biases.
 
-Still developing plugin to recover instance `__dict__`. Note that you must specify exactly ONE Python process in the form of --pid=PID or -p PID. See --help for more information. Tested on Python 3.7.5 
+Still under testing phase. Note that you must specify exactly ONE Python process in the form of --pid=PID or -p PID. See --help for more information. Tested on Python 3.7.5
 
 ## linux_python3_strings
 To execute the plugin found in `python3-brute-strings.py`, execute:
 <pre><code>$ python vol.py --plugins=./CARLA-Volatility-Plugins/ --profile=*YOUR LINUX PROFILE* -f *PATH TO MEMORY DUMP* linux_python_brute_strings -p *Python PID*</code></pre>
 
-This will find all CPython unicode objects in the Python process memory (located in heaps) by checking if each address is a PyASCIIObject. Note that you must specify exactly ONE Python process in the form of --pid=PID or -p PID. See --help for more information. Tested on Python 3.7.5
+This will find all CPython unicode objects in the Python process memory (located in heaps) by checking if each address is a _PyASCIIObject. Note that you must specify exactly ONE Python process in the form of --pid=PID or -p PID. See --help for more information. Tested on Python 3.7.5
 
 ## linux_find_instances
 To execute the plugin found in `python2-find-instances.py`, execute the following:
