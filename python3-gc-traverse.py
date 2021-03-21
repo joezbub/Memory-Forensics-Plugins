@@ -7,6 +7,8 @@ import time
 import timeit
 import io
 import json
+import random
+from collections import OrderedDict
 
 from itertools import groupby
 
@@ -205,7 +207,7 @@ pyobjs_vtype_64 = { #Found info here: https://github.com/python/cpython/blob/3.6
             'ob_refcnt': [0, ['long long']],  # Py_ssize_t = ssize_t
             'ob_type': [8, ['pointer', ['_PyTypeObject']]],  # struct _typeobject *
             'ob_dim': [16, ['pointer', ['_PyLongObject1']]],
-            'layer_ptr': [24, ['pointer', ['void']]]
+            'model_ptr': [24, ['pointer', ['void']]]
         }],
     '_TensorShape1': [
         32,
@@ -214,6 +216,25 @@ pyobjs_vtype_64 = { #Found info here: https://github.com/python/cpython/blob/3.6
             'ob_type': [8, ['pointer', ['_PyTypeObject']]],  # struct _typeobject *
             'ob_list': [16, ['pointer', ['_PyListObject1']]]
         }],
+    'float32': [
+        4,
+        {
+            'ob_fval': [0, ['int']]
+        }],
+    '_TensorBuffer1': [
+        24,
+        {
+            'vtable_ptr': [0, ['pointer', ['address']]],  # ptr to vtable
+            'ob_refcnt': [8, ['long long']],
+            'data_': [16, ['pointer', ['float32']]]
+        }],
+    '_Tensor1': [
+        32,
+        {
+            'shape': [0, ['array', 8, ['unsigned short int']]],  
+            'num_elements': [16, ['long long']],
+            'buf_': [24, ['pointer', ['_TensorBuffer1']]]
+        }],
     '_PyObject1': [
         16,
         {
@@ -221,7 +242,7 @@ pyobjs_vtype_64 = { #Found info here: https://github.com/python/cpython/blob/3.6
             'ob_type': [8, ['pointer', ['_PyTypeObject']]],  # struct _typeobject *
         }]
     }
-
+    
 
 class _PyTypeObject(obj.CType):
     def check_char(self, c):
@@ -578,6 +599,8 @@ class _PyLongObject1(obj.CType): #unfinished
 
     @property
     def val(self):
+        if (self.obj_offset == 0xa286b0):
+            return None
         if self.ob_size == 0:
             return 0
         mult = self.ob_size / abs(self.ob_size)
@@ -688,6 +711,36 @@ class _TensorShape1(obj.CType):
         return self.ob_list.dereference().val
 
 
+class float32(obj.CType):
+    def is_valid(self):
+        curr = self.val
+        return (abs(curr) < 10.0) #arbitrary value
+
+    @property
+    def val(self):
+        return float(ctypes.c_float.from_buffer(ctypes.c_int(self.ob_fval)).value)
+
+
+class _TensorBuffer1(obj.CType):
+    def is_valid(self):
+        return (self.vtable_ptr.is_valid() and self.vtable_ptr.dereference().is_valid()  
+                and self.ob_refcnt.is_valid() and self.data_.is_valid() and self.data_.dereference().is_valid())
+
+    @property
+    def val(self):
+        return self.data_
+
+
+class _Tensor1(obj.CType):
+    def is_valid(self):
+        return (self.num_elements.is_valid() and self.buf_.is_valid() 
+                and self.buf_.dereference().is_valid())
+
+    @property
+    def val(self):
+        return self.buf_.dereference().val
+
+
 class _PyObject1(obj.CType):
     def get_type(self, s):
         pymap = ({
@@ -753,22 +806,127 @@ class PythonClassTypes3(obj.ProfileModification):
             "_PyEagerTensor1": _PyEagerTensor1,
             "_PyDimension1": _PyDimension1,
             "_TensorShape1": _TensorShape1,
+            "float32": float32,
+            "_TensorBuffer1": _TensorBuffer1,
+            "_Tensor1": _Tensor1,
             "_PyObject1": _PyObject1
         })
 
 
-def brute_force_search(addr_space, obj_type_string, start, stop, class_name):
+def extract_data(addr_space, num_elements, buf):
+    ct = 0
+    ret = []
+    while (ct != num_elements):
+        found_object = obj.Object("float32",
+                                offset=buf,
+                                vm=addr_space)
+        if (ct < 3):
+            print found_object.val
+        ret.append(found_object.val)
+        buf += 4
+        ct += 1
+
+    return ret
+
+
+def find_tensors(task, addr_space, num_elements_dict, data_ptrs, amt_repeat):
+    #only 3 tensors for each kernel/bias bc of optimizers
+    heaps = []
+    for vma in task.get_proc_maps(): #get heaps
+        if vma.vm_name(task) == "[heap]":
+            heaps.append(vma)
+
+    tot_amt = len(data_ptrs) * amt_repeat # if we hit this number, break
+    vis = set()
+
+    weight_candidates = {}
+
+    for heap in heaps:
+        tmp = heap.vm_end / 8 * 8  #make sure divisible by 8
+        end = (heap.vm_start + 7) / 8 * 8
+        print "from", hex(int(tmp)), "to", hex(int(end))
+
+        #tmp = 0x592ef80 #remove later
+        
+        while tmp != end: #begin search
+            
+            found_object = obj.Object("_Tensor1",
+                            offset=tmp,
+                            vm=addr_space)
+            
+            if (found_object.is_valid() and int(found_object.num_elements) in num_elements_dict):
+                                
+                for tup in num_elements_dict[int(found_object.num_elements)]:
+                    name = tup[0]
+                    arr = tup[1]
+                    if len(data_ptrs[name]) == amt_repeat or found_object.buf_.dereference().data_ in vis:
+                        continue
+                    shape_valid = True
+                    for i in range(len(arr)):
+                        if (arr[i] != int(found_object.shape[i])):
+                            shape_valid = False
+                            break
+                    if (shape_valid):
+                        data_ptrs[name].add(found_object.buf_.dereference().data_)
+                        vis.add(found_object.buf_.dereference().data_)
+                        print
+                        print name, "works"
+                        print "num_elements", found_object.num_elements
+                        print "obj_offset", hex(found_object.obj_offset)
+                        print "vtable ptr (0x7fffd0d16c48L):", hex(found_object.buf_.dereference().vtable_ptr)
+                        print "data_ ptr:", hex(found_object.buf_.dereference().data_)
+                        print tot_amt - len(vis), "left"
+                        print data_ptrs
+
+                        if name not in weight_candidates:
+                            weight_candidates[name] = [extract_data(addr_space, found_object.num_elements, int(found_object.buf_.dereference().data_))]
+                        else:
+                            weight_candidates[name].append(extract_data(addr_space, found_object.num_elements, int(found_object.buf_.dereference().data_)))
+                        
+                        break
+            
+            if len(vis) == tot_amt:
+                break
+
+            tmp -= 8 #from end to beginning
+
+    print "\ndone with extraction\n"
+    return weight_candidates
+
+
+def get_avg(weights, inds):
+    curr = 0.0
+    for x in inds:
+        curr += abs(weights[x])
+    return curr / float(len(inds))
+
+
+def sample(arr):
+    for pair in arr:
+        weights = pair[1]
+        n = len(weights)
+        if (n <= 30):
+            pair[0] = get_avg(weights, range(n))
+        elif (n <= 300):
+            inds = random.sample(xrange(n), 30)
+            pair[0] = get_avg(weights, inds)
+        else:
+            inds = random.sample(xrange(n), n / 10)
+            inds.sort()
+            pair[0] = get_avg(weights, inds)
+    arr.sort(reverse=True)
+    return arr
+
+
+def traverse_gc(task, addr_space, obj_type_string, start, stop, class_name):
     """
-    Brute-force search an area of memory for a given object type.  Returns
-    valid types as a generator.
+    Traverses the garbage collector doubly linked list, searches for Sequential.
     - 136883 -> 149033 objects found for trained MNIST
     - After trained, Sequential moved to Generation 3
     """
     tmp = start
-    arr = []
     
     while True:
-        arr.append(tmp)
         found_head = obj.Object("_PyGC_Head", offset=tmp, vm=addr_space)
         found_object = obj.Object("_PyInstanceObject1",
                             offset=tmp + 32,
@@ -778,10 +936,12 @@ def brute_force_search(addr_space, obj_type_string, start, stop, class_name):
             print "_PyGC_Head invalid"
             sys.exit(0)
             
-        #print "curr:", hex(tmp), "next:", hex(found_head.next_val), "prev:", hex(found_head.prev_val)
+        print "curr:", hex(tmp), "next:", hex(found_head.next_val), "prev:", hex(found_head.prev_val)
+        print found_object.ob_type.dereference().name
         
         if found_object.ob_type.dereference().name == class_name:
             print "Found", found_object.ob_type.dereference().name, "at", hex(found_object.obj_offset)
+            """
             print "tp_basicsize:", found_object.ob_type.dereference().tp_basicsize
             print "tp_dictoffset:", found_object.ob_type.dereference().tp_dictoffset
             print "in_dict pointer:", hex(found_object.in_dict)
@@ -790,22 +950,34 @@ def brute_force_search(addr_space, obj_type_string, start, stop, class_name):
             print "ma_keys pointer:", hex(found_object.in_dict.dereference().ma_keys)
             print "ma_values pointer:", hex(found_object.in_dict.dereference().ma_values)
             print
-
-            #print __dict__ (recurse through lists and tuples)
+            """
             model_dict = found_object.in_dict.dereference().val
-            print "model.__dict__:"
-            print model_dict
-            print
+
+            ret = {}
+            data_ptrs = {}
+            shape = OrderedDict()
+
             print "Number of layers:", len(model_dict['_layers'])
             for i in range(len(model_dict['_layers'])):
                 print
                 model_layer = model_dict['_layers'][i].in_dict.dereference().val
-                print "Layer Name:", model_layer['_name']
+                print model_layer['_name']
                 
                 #print model_layer
 
                 if ("input" in model_layer['_name']):
+                    shape[model_layer['_name']] = list(model_layer['_batch_input_shape'])
                     print "Input Shape:", list(model_layer['_batch_input_shape'])
+                    continue
+
+                if ("max_pooling" in model_layer['_name'] or "average_pooling" in model_layer['_name']):
+                    shape[model_layer['_name']] = model_layer['pool_size']
+                    print "Pool Size:", model_layer['pool_size']
+                    continue
+
+                if ("dropout" in model_layer['_name']):
+                    shape[model_layer['_name']] = model_layer['rate']
+                    print "Rate:", model_layer['rate']
                     continue
 
                 if not model_layer.has_key("_trainable_weights"):
@@ -813,29 +985,105 @@ def brute_force_search(addr_space, obj_type_string, start, stop, class_name):
                     continue
 
                 print "amt of trainable weights:", len(model_layer['_trainable_weights'])
-                if (len(model_layer['_non_trainable_weights']) > 0):
+                
+                if (len(model_layer['_non_trainable_weights']) > 0): #stop if there are nontrainable weights
                     print "Non trainable weights len > 0"
                     print model_layer
                     sys.exit(0)
                 
                 for j in range(len(model_layer['_trainable_weights'])):
                     model_weights = model_layer['_trainable_weights'][j].in_dict.dereference().val
-                    print "Handle Name:", model_weights['_handle_name']
+                    print "Name:", model_weights['_handle_name']
                     print "Shape:", model_weights['_shape'].val
-                    #print model_weights
-                    ret = []
-                    ret.append(model_weights['_handle'])
-                    print "EagerTensor:"
-                    print ret
+                    shape[model_weights['_handle_name']] = model_weights['_shape'].val
 
-            sys.exit(0) #temporary
-            break
+                    tot = 1
+                    for x in model_weights['_shape'].val:
+                        tot *= x
+                    if (tot not in ret):
+                        ret[tot] = [(model_weights['_handle_name'], model_weights['_shape'].val)]
+                    else:
+                        ret[tot].append((model_weights['_handle_name'], model_weights['_shape'].val))
+                    
+                    data_ptrs[model_weights['_handle_name']] = set()
+                        
+            dups = {}
+            for num in ret:
+                ret[num].sort(key=lambda x:x[1])
+                mem = ret[num][0]
+                for i in range(1, len(ret[num])): #detect duplicate shapes
+                    if (mem[1] == ret[num][i][1]):
+                        if (mem[0] not in dups):
+                            dups[mem[0]] = [ret[num][i][0]]
+                        else:
+                            dups[mem[0]].append(ret[num][i][0])
+                    else:
+                        mem = ret[num][i]
+        
+            print ret
+            print shape
+            print dups
+            
+            weights = find_tensors(task, addr_space, ret, data_ptrs, 3) #3 is hardcoded (optimizers + 1)
+            
+            final = {}
+
+            #must aggregate all identical tensor shapes in one pool to filter out optimizers
+            for key in dups:
+                pool = []
+                for x in weights[key]:
+                    pool.append([0.0, x])
+                for name in dups[key]:
+                    for x in weights[name]:
+                        pool.append([0.0, x])
+                pool = sample(pool) #random samples, gets averages, and sorts by descending
+                must_be_weights = [] #the greatest averages must be weights
+                for i in range(len(pool) / 3):
+                    must_be_weights.append(pool[i][1])
+
+                final[key] = must_be_weights
+                for name in dups[key]:
+                    final[name] = must_be_weights
+
+            #handle distinct tensors now
+            for key in weights:
+                pool = []
+                if (key in final):
+                    continue
+                for x in weights[key]:
+                    pool.append([0.0, x])
+                pool = sample(pool)
+                final[key] = [pool[0][1]]
+
+            f = open("weights.txt", 'w')
+            print "MODEL SUMMARY"
+            for key in shape:
+                print key
+                print shape[key]
+                if (key in final):
+                    print "Weights added to weights.txt"
+                    f.write(key + "\n")
+                    f.write(str(shape[key]) + "\n")
+                    for arr in final[key]:
+                        f.write(str(arr) + "\n")
+                    f.write("\n")
+                print
+            
+            if (len(dups) == 0):
+                print "No Duplicate Tensors"
+            else:
+                print "Duplicate Tensors Found (weights match any of them):"
+                for key in dups:
+                    tmp = dups[key]
+                    tmp.append(key)
+                    print tmp
+
+            return True
         
         if (tmp == stop):
             break
         tmp = found_head.next_val
-
-    return arr
+    return False
 
 
 def get_profile_data():
@@ -854,57 +1102,55 @@ def find_PyRuntime():
 
 def find_instance(task, class_name):
     """
-    Go to _PyRuntimeState -> gc -> generations -> brute force through PyGC_Head pointers
+    Go to _PyRuntimeState -> gc -> generations -> Traverse PyGC_Head pointers
     """
-
+    
     start = timeit.default_timer()
 
     addr_space = task.get_process_address_space() 
 
     _PyRuntimeLoc = find_PyRuntime()
-    
+
+    print "_PyRuntime", hex(_PyRuntimeLoc)
+
     if _PyRuntimeLoc == -1:
         print "Failed to find any _pyruntime location"
         sys.exit(0)
     
     pyruntime = obj.Object("_PyRuntimeState",
-                                  offset=_PyRuntimeLoc,
+                                  offset=_PyRuntimeLoc, #0xaa6560
                                   vm=addr_space)
+
     if not pyruntime.is_valid():
         print "Not _PyRuntimeState"
         sys.exit(0)
-
-    found_locs = []
     
-    found_locs.extend(brute_force_search(
+    if (traverse_gc(task=task, 
             addr_space=addr_space,
             obj_type_string="_PyGC_Head",
             start=pyruntime.gen1_next,
             stop=pyruntime.gen1_prev,
-           class_name=class_name))
-    found_locs.extend(brute_force_search(
+           class_name=class_name)):
+           return
+    if (traverse_gc(task=task, 
             addr_space=addr_space,
             obj_type_string="_PyGC_Head",
             start=pyruntime.gen2_next,
             stop=pyruntime.gen2_prev,
-            class_name=class_name))
-    found_locs.extend(brute_force_search(
+            class_name=class_name)):
+            return
+    if (traverse_gc(task=task, 
             addr_space=addr_space,
             obj_type_string="_PyGC_Head",
-            start=pyruntime.gen3_next,
+            start=pyruntime.gen3_next, #pid 1755 = 0x7ffff017d9d0 - 32, pid 2866 = 0x7ffff017d950 - 32
             stop=pyruntime.gen3_prev,
-            class_name=class_name))
-
-    print len(found_locs), "objects found"
-    stop = timeit.default_timer()
-    print("Runtime: {0}".format(stop - start))
-    sys.exit(0)
-    return found_locs
+            class_name=class_name)):
+            return
 
 
 def _is_python_task(task, pidstr):
     """
-    Checks if the task has the CARLA PID
+    Checks if the task has the specified Python PID
     """
     if str(task.pid) != pidstr:
         return False
@@ -914,26 +1160,25 @@ def _is_python_task(task, pidstr):
 
 class linux_find_instances3(linux_pslist.linux_pslist):
     """
-    Pull Tensorflow model instances from a Python process's GC generations. Under development.
-    Still need to:
-    1. Isolate and retrieve weights and shapes
+    Recovers Tensorflow model attributes from a Python process.
     """
     def __init__(self, config, *args, **kwargs):
         linux_pslist.linux_pslist.__init__(self, config, *args, **kwargs)
         self._config.add_option(
             'PID', short_option = 'p', default = None,
-                          help = 'Operate on the CARLA Process ID',
+                          help = 'Operate on the Python Process ID',
                           action = 'store', type = 'str')
 
     def _validate_config(self):
         if self._config.PID is not None and len(self._config.PID.split(',')) != 1:
-            debug.error("Please enter the CARLA Python API process PID")
+            debug.error("Please enter the process PID")
         
     def calculate(self):
         """
-        Find the tasks that are actually python processes.  May not
-        necessarily be called "python", but the executable is python.
-
+        Runtime stats:
+        Finding Sequential takes 5 minutes
+        Brute force through heap (for tensor objects) takes: 2.5 min / 10 MB
+        Total about: 15 minutes (depends on how tensors are spread out)
         """
         start = timeit.default_timer()
         linux_common.set_plugin_members(self)
@@ -947,11 +1192,11 @@ class linux_find_instances3(linux_pslist.linux_pslist):
                 tasks.append(task)
 
         for task in tasks:
-            for instance in find_instance(task, "Sequential"):
-                yield instance
+            find_instance(task, "Sequential")
         
-        #stop = timeit.default_timer()
-        #print("Runtime: {0}".format(stop - start))
+        stop = timeit.default_timer()
+        print("\nRuntime: {0} seconds".format(stop - start))
+        sys.exit(0)
 
     def unified_output(self, data):
         """
