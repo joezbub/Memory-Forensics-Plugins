@@ -19,7 +19,7 @@ from volatility.plugins.linux import pslist as linux_pslist
 from volatility.renderers import TreeGrid
 from volatility import utils
 
-PROFILE_PATH = "./Scripts/ScriptOutputs/profile_py.txt"  # PATH TO PYTHON PROFILE
+PROFILE_PATH = "./myplugins/Scripts/ScriptOutputs/profile_py.txt"  # PATH TO PYTHON PROFILE
 PROFILE_DATA = None
 
 pyobjs_vtype_64 = { #Found info here: https://github.com/python/cpython/blob/3.6/Include
