@@ -15,7 +15,7 @@ Make sure that the input path in `python-gc-traverse.py` and the output paths in
 A profile should be generated in `ScriptOutputs`.
 
 To execute plugins, cd into the volatility directory and execute:
-<pre><code>$ python vol.py --plugins=./AI-Psychiatry/ --profile=*LINUX PROFILE* -f *PATH TO MEMORY DUMP* *PLUGIN NAME* -p *Python PID*</code></pre>
+<pre><code>$ python vol.py --plugins=./Memory-Forensics-Plugins/ --profile=*LINUX PROFILE* -f *PATH TO MEMORY DUMP* *PLUGIN NAME* -p *Python PID*</code></pre>
 
 # Plugin Details
 
