@@ -19,7 +19,7 @@ from volatility.plugins.linux import pslist as linux_pslist
 from volatility.renderers import TreeGrid
 from volatility import utils
 
-PROFILE_PATH = "./myplugins/Scripts/ScriptOutputs/profile_py.txt"  # PATH TO PYTHON PROFILE
+PROFILE_PATH = "./Scripts/ScriptOutputs/profile_py.txt"  # PATH TO PYTHON PROFILE
 PROFILE_DATA = None
 
 pyobjs_vtype_64 = { #Found info here: https://github.com/python/cpython/blob/3.6/Include
@@ -777,7 +777,7 @@ class _PyObject1(obj.CType):
             return tmp
 
 
-class PythonClassTypes3(obj.ProfileModification):
+class PythonClassTypes4(obj.ProfileModification):
     """
     Profile modifications for Python class types.  Only Linux and Mac OS,
     on 64-bit systems, are supported right now.
@@ -822,7 +822,10 @@ def extract_data(addr_space, num_elements, buf):
                                 vm=addr_space)
         if (ct < 3):
             print found_object.val
-        ret.append(found_object.val)
+        if not isinstance(found_object.val, float): #invalid tensor
+            return []
+        else:
+            ret.append(found_object.val)
         buf += 4
         ct += 1
 
@@ -845,8 +848,6 @@ def find_tensors(task, addr_space, num_elements_dict, data_ptrs, amt_repeat):
         tmp = heap.vm_end / 8 * 8  #make sure divisible by 8
         end = (heap.vm_start + 7) / 8 * 8
         print "from", hex(int(tmp)), "to", hex(int(end))
-
-        #tmp = 0x592ef80 #remove later
         
         while tmp != end: #begin search
             
@@ -918,7 +919,7 @@ def sample(arr):
     return arr
 
 
-def traverse_gc(task, addr_space, obj_type_string, start, stop, class_name):
+def traverse_gc(task, addr_space, obj_type_string, start, stop, class_names):
     """
     Traverses the garbage collector doubly linked list, searches for Sequential.
     - 136883 -> 149033 objects found for trained MNIST
@@ -939,18 +940,9 @@ def traverse_gc(task, addr_space, obj_type_string, start, stop, class_name):
         print "curr:", hex(tmp), "next:", hex(found_head.next_val), "prev:", hex(found_head.prev_val)
         print found_object.ob_type.dereference().name
         
-        if found_object.ob_type.dereference().name == class_name:
+        if found_object.ob_type.dereference().name in class_names:
             print "Found", found_object.ob_type.dereference().name, "at", hex(found_object.obj_offset)
-            """
-            print "tp_basicsize:", found_object.ob_type.dereference().tp_basicsize
-            print "tp_dictoffset:", found_object.ob_type.dereference().tp_dictoffset
-            print "in_dict pointer:", hex(found_object.in_dict)
-            print "Num items in dict:", found_object.in_dict.dereference().ma_used
-            print "ma_version_tag:", found_object.in_dict.dereference().ma_version_tag
-            print "ma_keys pointer:", hex(found_object.in_dict.dereference().ma_keys)
-            print "ma_values pointer:", hex(found_object.in_dict.dereference().ma_values)
-            print
-            """
+
             model_dict = found_object.in_dict.dereference().val
 
             ret = {}
@@ -1008,7 +1000,9 @@ def traverse_gc(task, addr_space, obj_type_string, start, stop, class_name):
                     data_ptrs[model_weights['_handle_name']] = set()
                         
             dups = {}
+            tot_num_elements = 0
             for num in ret:
+                tot_num_elements += num * len(ret[num])
                 ret[num].sort(key=lambda x:x[1])
                 mem = ret[num][0]
                 for i in range(1, len(ret[num])): #detect duplicate shapes
@@ -1019,7 +1013,8 @@ def traverse_gc(task, addr_space, obj_type_string, start, stop, class_name):
                             dups[mem[0]].append(ret[num][i][0])
                     else:
                         mem = ret[num][i]
-        
+
+            print "Total elements:", tot_num_elements
             print ret
             print shape
             print dups
@@ -1055,20 +1050,22 @@ def traverse_gc(task, addr_space, obj_type_string, start, stop, class_name):
                 pool = sample(pool)
                 final[key] = [pool[0][1]]
 
-            f = open("weights.txt", 'w')
+            f = open("weights1.txt", 'w')
+            out_dict = {'model_name': model_dict['_name'], 'num_elements': tot_num_elements, 'tensors': {}}
             print "MODEL SUMMARY"
             for key in shape:
                 print key
                 print shape[key]
                 if (key in final):
+                    curr_dict = {'shape': shape[key], 'weights': final[key]}
+                    out_dict['tensors'][key] = curr_dict
                     print "Weights added to weights.txt"
-                    f.write(key + "\n")
-                    f.write(str(shape[key]) + "\n")
-                    for arr in final[key]:
-                        f.write(str(arr) + "\n")
-                    f.write("\n")
+        
                 print
-            
+
+            with open(model_dict["_name"] + "-weights.txt", 'w') as f:
+                json.dump(out_dict, f)
+
             if (len(dups) == 0):
                 print "No Duplicate Tensors"
             else:
@@ -1100,7 +1097,7 @@ def find_PyRuntime():
     return -1
 
 
-def find_instance(task, class_name):
+def find_instance(task, class_names):
     """
     Go to _PyRuntimeState -> gc -> generations -> Traverse PyGC_Head pointers
     """
@@ -1130,22 +1127,25 @@ def find_instance(task, class_name):
             obj_type_string="_PyGC_Head",
             start=pyruntime.gen1_next,
             stop=pyruntime.gen1_prev,
-           class_name=class_name)):
+           class_names=class_names)):
            return
     if (traverse_gc(task=task, 
             addr_space=addr_space,
             obj_type_string="_PyGC_Head",
             start=pyruntime.gen2_next,
             stop=pyruntime.gen2_prev,
-            class_name=class_name)):
+            class_names=class_names)):
             return
     if (traverse_gc(task=task, 
             addr_space=addr_space,
             obj_type_string="_PyGC_Head",
-            start=pyruntime.gen3_next, #pid 1755 = 0x7ffff017d9d0 - 32, pid 2866 = 0x7ffff017d950 - 32
+            start=pyruntime.gen3_next,
             stop=pyruntime.gen3_prev,
-            class_name=class_name)):
+            class_names=class_names)):
             return
+    
+    print "Sequential not found"
+    return
 
 
 def _is_python_task(task, pidstr):
@@ -1158,9 +1158,10 @@ def _is_python_task(task, pidstr):
         return True
 
 
-class linux_find_instances3(linux_pslist.linux_pslist):
+class mnist_weights(linux_pslist.linux_pslist):
     """
     Recovers Tensorflow model attributes from a Python process.
+    Includes VType definitions.
     """
     def __init__(self, config, *args, **kwargs):
         linux_pslist.linux_pslist.__init__(self, config, *args, **kwargs)
@@ -1177,7 +1178,7 @@ class linux_find_instances3(linux_pslist.linux_pslist):
         """
         Runtime stats:
         Finding Sequential takes 5 minutes
-        Brute force through heap (for tensor objects) takes: 2.5 min / 10 MB
+        Brute force through heap (for tensor objects) takes: 2.1 min / 10 MB
         Total about: 15 minutes (depends on how tensors are spread out)
         """
         start = timeit.default_timer()
@@ -1192,7 +1193,7 @@ class linux_find_instances3(linux_pslist.linux_pslist):
                 tasks.append(task)
 
         for task in tasks:
-            find_instance(task, "Sequential")
+            find_instance(task, ["Sequential", "Functional"])
         
         stop = timeit.default_timer()
         print("\nRuntime: {0} seconds".format(stop - start))
