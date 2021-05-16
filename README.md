@@ -1,5 +1,5 @@
 # AI Psychiatry Volatility Plugins
-Volatility plugins to extract Tensorflow model internals from a memory dump. The three plugins, `mnist_weights` in `mnist.py`, `cifar_10_weights` in `cifar-10.py`, and `obj_detect_weights` in `object-detection.py`, are relevant to our evaluation (they correspond to each model type). The other plugins are more basic and are meant to recover singular Python objects for demonstration purposes.
+Volatility plugins to extract Tensorflow model internals from a memory dump. The three plugins, `mnist_weights` in `mnist.py`, `cifar_10_weights` in `cifar-10.py`, and `obj_detect_weights_shapes` in `object-detection-with-shapes.py`, are relevant to our evaluation (they correspond to each model type). The other plugins are more basic and are meant to recover singular Python objects for demonstration purposes.
 
 Our experiments were conducted on VirtualBox VMs running Ubuntu 18.04 (image: 5.3.0-62-generic) with 8-16 GB RAM. Note that Garbage Collector generations are only accessible using Python 3.7+ and `venv`. Our plugin cannot locate the Runtime struct using Anaconda environments.
 
@@ -15,7 +15,7 @@ Make sure that the input path in `python-gc-traverse.py` and the output paths in
 A profile should be generated in `ScriptOutputs`.
 
 To execute plugins, cd into the volatility directory and execute:
-<pre><code>$ python vol.py --plugins=./Memory-Forensics-Plugins/ --profile=*LINUX PROFILE* -f *PATH TO MEMORY DUMP* *PLUGIN NAME* -p *Python PID*</code></pre>
+<pre><code>$ python vol.py --plugins=./AI-Psychiatry/ --profile=*LINUX PROFILE* -f *PATH TO MEMORY DUMP* *PLUGIN NAME* -p *Python PID*</code></pre>
 
 # Plugin Details
 
@@ -35,10 +35,15 @@ Designed to recover both `mobilenetv1` and `VGG16` detection models. Because the
 
 Tested on Python 3.7.5
 
-## obj_detect_weights
-Implementation slightly differs from the previous two plugins because it initially loads ground truth shapes from a json file and then performs the heap search.
+## obj_detect_weights_shapes
+Because the object detection experiments use `tf.saved_model` internally, we had to write a different plugin for this model type. After identifying the saved_model's `FuncGraph`, we recover its `_weak_variables` which contain the relevant tensors and perform the heap traversal.
 
 Designed for our object detection experiments, involving `efficientdet`, `mobilenetv1` and `resnet` models with varying alphas. These models are the largest, especially resnet, so the runtime spans from 2-5 hours.
+
+Tested on Python 3.7.5
+
+## obj_detect_weights
+Implementation slightly differs from the previous three plugins because it initially loads ground truth shapes from a json file and then performs the heap search. Otherwise, the plugin is similar to `obj_detect_weights_shapes`.
 
 Tested on Python 3.7.5
 
